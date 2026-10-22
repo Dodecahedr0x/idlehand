@@ -83,6 +83,40 @@ def test_node_stays_up_after_the_limit(tmp_path: Path, monkeypatch) -> None:
     assert alive_pid(home) is None
 
 
+def test_node_stays_up_when_the_clone_is_refused(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    invoked = tmp_path / "claude-invoked"
+    script = bin_dir / "claude"
+    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    config = load_config(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    save_sources(home, [{"url": "https://user:secret@github.com/org/repo.git", "note": "credentials"}])
+    start_node(home)
+    try:
+        state = _wait_for(home, lambda item: int((item.get("loop") or {}).get("cycles") or 0) >= 1)
+        assert alive_pid(home) is not None
+        assert state["ledger"]["estimated_tokens"] == 0
+        assert state["ledger"]["metered_tokens"] == 0
+        assert state["plans"][0]["contributed"] is False
+        assert state["plans"][0]["upstream_cloned"] is False
+        assert "credentials" in state["plans"][0]["fetch"]["reason"]
+        assert not invoked.exists()
+        blob = json.dumps(state)
+        assert "secret" not in blob
+        assert "nothing was contributed" in render_text(home)
+    finally:
+        stop_node(home)
+
+
 def test_uninstalled_subscription_stays_up(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")

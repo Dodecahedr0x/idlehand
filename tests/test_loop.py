@@ -663,6 +663,97 @@ def test_usage_on_stderr_is_not_treated_as_a_report(tmp_path: Path, monkeypatch)
     assert "99" not in json.dumps(state["ledger"])
 
 
+def test_zero_report_then_estimate_is_mixed(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":0,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 40
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    first = tick(home)
+    assert first["ledger"]["metering"] == "reported"
+    assert first["ledger"]["metered_tokens"] == 0
+    script = tmp_path / "bin" / "claude"
+    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\n", encoding="utf-8")
+    script.chmod(0o755)
+    second = tick(home)
+    assert second["ledger"]["estimated_tokens"] == 40
+    assert second["ledger"]["metered_tokens"] == 0
+    assert second["ledger"]["metering"] == "mixed"
+    assert "40 estimated, 0 reported" in render_text(home)
+
+
+def test_workspace_symlink_is_not_cloned_or_charged(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    url = _local_source(home, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("safe", encoding="utf-8")
+    workspace = _workspace(home, url)
+    workspace.parent.mkdir(parents=True, exist_ok=True)
+    workspace.symlink_to(outside)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["upstream_cloned"] is False
+    assert plan["subscription_executed"] is False
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["ledger"]["metered_tokens"] == 0
+    assert (outside / "keep").read_text(encoding="utf-8") == "safe"
+    assert not invoked.exists()
+
+
+def test_link_cycle_reports_trust_and_usage_together(tmp_path: Path, monkeypatch) -> None:
+    from fossah.links import apply_link
+
+    home = tmp_path / "home"
+    _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":5,"output_tokens":2}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    ensure_home(home)
+    url = make_repo(tmp_path / "linked", SAMPLE_FILES)
+    added = apply_link(
+        home,
+        "fossah://add?repo=https://github.com/pallets/click&repo=git@github.com:org/nope.git",
+    )
+    assert added == ["https://github.com/pallets/click"]
+    save_sources(home, [{"url": url, "note": "local cycle"}])
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert state["plans"][0]["upstream_cloned"] is True
+    assert state["ledger"]["metered_tokens"] == 7
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["contributions_pushed"] == 0
+    text = render_text(home)
+    assert "accepted link" in text
+    assert "refused link" in text
+    assert "git repository URL" in text
+    assert "contributions recorded: 1" in text
+    assert "reported by the subscription" in text
+    assert "nothing was contributed" not in text
+
+
 def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
