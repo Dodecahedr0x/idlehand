@@ -1,0 +1,102 @@
+"""Text and JSON views of the local node."""
+
+from __future__ import annotations
+
+import json
+import shlex
+from pathlib import Path
+from typing import Any
+
+from fossah.config import load_config, load_peers, load_sources, state_path
+from fossah.home import read_json
+from fossah.process import alive_pid
+
+
+def snapshot(home: Path) -> dict[str, Any]:
+    config = load_config(home) if (home / "config.toml").exists() else {}
+    state = read_json(state_path(home))
+    if not isinstance(state, dict):
+        state = {}
+    pid = alive_pid(home)
+    return {
+        "home": str(home),
+        "pid": pid,
+        "node_running": pid is not None,
+        "config_present": bool(config),
+        "spending_limit_tokens": config.get("spending_limit_tokens"),
+        "rules": config.get("rules", {}),
+        "sources": load_sources(home) if (home / "sources.toml").exists() else [],
+        "peers": load_peers(home) if (home / "peers.toml").exists() else [],
+        "state": state,
+    }
+
+
+def _command(command: list[str] | None) -> str:
+    if not command:
+        return ""
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def render_text(home: Path) -> str:
+    snap = snapshot(home)
+    state = snap["state"]
+    node = state.get("node", {}) if isinstance(state, dict) else {}
+    subscription = state.get("subscription", {}) if isinstance(state, dict) else {}
+    loop = state.get("loop", {}) if isinstance(state, dict) else {}
+    ledger = state.get("ledger", {}) if isinstance(state, dict) else {}
+    peers_runtime = state.get("peers_runtime", {}) if isinstance(state, dict) else {}
+    plans = state.get("plans", []) if isinstance(state, dict) else []
+    if not isinstance(plans, list):
+        plans = []
+    if snap["node_running"]:
+        node_line = f"up (pid {snap['pid']})"
+    elif node.get("status") == "stopped":
+        node_line = "stopped"
+    elif not snap["config_present"]:
+        node_line = "not initialized"
+    else:
+        node_line = "not running"
+    if not subscription:
+        sub_line = "not configured"
+    elif subscription.get("connected"):
+        sub_line = f"{subscription.get('name')} connected ({subscription.get('binary')})"
+    else:
+        sub_line = subscription.get("detail") or "subscription is not connected"
+    spent = int(ledger.get("estimated_tokens", 0) or 0)
+    limit = ledger.get("limit_tokens", snap["spending_limit_tokens"])
+    pushed = int(state.get("contributions_pushed", 0) or 0) if isinstance(state, dict) else 0
+    direct = snap["peers"]
+    learned = [peer for peer in direct if peer.get("source") == "peers-of-peers"]
+    lines = [
+        "Fossah",
+        f"  node: {node_line}",
+        f"  subscription: {sub_line}",
+        f"  loop: {loop.get('status', 'idle')} — {loop.get('reason', '')}".rstrip(" —"),
+        f"  spending: {spent} / {limit} tokens (local estimate, not billed usage)",
+        f"  contributions pushed: {pushed}",
+        f"  repos: {len(snap['sources'])} in the local source list",
+        f"  peers: {len(direct)} direct, {len(learned)} added from peers of peers",
+        f"  remote repo lists ignored: {peers_runtime.get('ignored_remote_repos', 0)}",
+        "  nothing was contributed",
+    ]
+    if peers_runtime.get("last_error"):
+        lines.append(f"  peer fetch: {peers_runtime['last_error']}")
+    if not plans:
+        lines.append("  plans: 0")
+    else:
+        lines.append(f"  plans: {len(plans)} (latest)")
+        for plan in plans[-5:]:
+            demo = " demo" if plan.get("demo") else ""
+            sandbox = plan.get("sandbox") or {}
+            lines.append(
+                f"    {plan.get('action')}{demo} {plan.get('repo')} "
+                f"contributed=no sandbox={sandbox.get('reason', '')}"
+            )
+            command = _command(plan.get("subscription_command"))
+            if command:
+                lines.append(f"      command (not run): {command}")
+    return "\n".join(lines) + "\n"
+
+
+def render_json(home: Path) -> str:
+    return json.dumps(snapshot(home), indent=2, sort_keys=True) + "\n"

@@ -1,0 +1,23 @@
+[project]
+name = "fossah"
+version = "0.1.0"
+description = "Free and Open Source Software At Home"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+fossah = "fossah.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fossah*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,119 @@
+import os
+import time
+from pathlib import Path
+
+from fossah.analytics import render_text
+from fossah.config import ensure_home, load_config, save_config, state_path
+from fossah.handler import register_protocol_handler
+from fossah.home import read_json
+from fossah.process import alive_pid, start_node, stop_node
+
+
+def _configure(home: Path) -> None:
+    config = ensure_home(home)
+    config["spending_limit_tokens"] = 400
+    config["estimate_tokens_per_cycle"] = 100
+    config["loop_interval_seconds"] = 0.05
+    config["sandbox"]["execute"] = False
+    config["publish"]["port"] = 0
+    config["publish"]["peer_fetch_interval_seconds"] = 3600
+    save_config(home, config)
+
+
+def _wait_for(home: Path, predicate, timeout: float = 10):
+    deadline = time.time() + timeout
+    last = {}
+    while time.time() < deadline:
+        last = read_json(state_path(home)) or {}
+        if predicate(last):
+            return last
+        time.sleep(0.05)
+    raise AssertionError(f"timed out; state={last}; log={(home / 'node.log').read_text(encoding='utf-8') if (home / 'node.log').exists() else ''}")
+
+
+def test_node_stays_up_after_the_limit(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    invoked = tmp_path / "claude-invoked"
+    script = bin_dir / "claude"
+    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    config = load_config(home)
+    config["subscription"] = "claude"
+    save_config(home, config)
+    pid = start_node(home)
+    try:
+        state = _wait_for(
+            home,
+            lambda item: item.get("loop", {}).get("status") == "stopped"
+            and item.get("ledger", {}).get("estimated_tokens") == 400,
+        )
+        assert alive_pid(home) == pid
+        assert state["contributions_pushed"] == 0
+        assert [plan["action"] for plan in state["plans"]] == ["test", "audit", "issue", "pull_request"]
+        assert not invoked.exists()
+        text = render_text(home)
+        assert "nothing was contributed" in text
+        assert "claude" in text
+    finally:
+        stop_node(home)
+    assert alive_pid(home) is None
+
+
+def test_uninstalled_subscription_stays_up(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    config = load_config(home)
+    config["subscription"] = "cursor"
+    save_config(home, config)
+    start_node(home)
+    try:
+        state = _wait_for(home, lambda item: item.get("subscription", {}).get("name") == "cursor")
+        assert state["subscription"]["connected"] is False
+        assert "not connected" in state["subscription"]["detail"]
+        assert state["plans"] == []
+        assert alive_pid(home) is not None
+        assert "not connected" in render_text(home)
+    finally:
+        stop_node(home)
+
+
+def test_cli_link_limit_and_handler(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    data = tmp_path / "share"
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_dir))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    from fossah.cli import main
+
+    assert main(["--home", str(home), "init"]) == 0
+    assert main(["--home", str(home), "limit", "1500"]) == 0
+    assert load_config(home)["spending_limit_tokens"] == 1500
+    assert main(["--home", str(home), "link", "fossah://add?repo=https://github.com/pallets/click"]) == 0
+    assert "https://github.com/pallets/click" in (home / "sources.toml").read_text(encoding="utf-8")
+    desktop = (data / "applications" / "fossah.desktop").read_text(encoding="utf-8")
+    assert "x-scheme-handler/fossah" in desktop
+    assert "%u" in desktop
+    mime = (config_dir / "mimeapps.list").read_text(encoding="utf-8")
+    assert "x-scheme-handler/fossah=fossah.desktop" in mime
+    status = register_protocol_handler()
+    assert status == "registered"
+
+
+def test_bare_fossah_url(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    from fossah.cli import main
+
+    assert main(["fossah://add?repo=https://github.com/encode/httpx"]) == 0
+    assert "https://github.com/encode/httpx" in (home / "sources.toml").read_text(encoding="utf-8")
