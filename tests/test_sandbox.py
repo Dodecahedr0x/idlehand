@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from idlehand.sandbox import build_bwrap_argv, build_container_argv, detect_runtime, run, run_namespace
+from idlehand.sandbox import build_bwrap_argv, build_container_argv, detect_runtime, run, run_namespace, sandbox_limits
 
 
 def test_namespace_hides_home_credentials_and_network(tmp_path: Path, monkeypatch) -> None:
@@ -163,6 +163,23 @@ def test_fake_docker_is_not_asked_to_run_on_the_host(tmp_path: Path, monkeypatch
     assert "none" in recorded
     assert str(workspace.resolve()) in recorded
     assert "docker.sock" not in recorded
+
+
+def test_credential_image_is_not_passed_to_the_runtime(tmp_path: Path) -> None:
+    assert sandbox_limits("python:3.12-slim", "512m", "1") == ("python:3.12-slim", "512m", "1")
+    workspace = tmp_path / "work"
+    result = run(
+        workspace,
+        ["/usr/bin/python3", "-c", "print('no')"],
+        runtime="docker",
+        image="password=sekret",
+    )
+    assert result.invoked is False
+    assert result.reason == "sandbox limit is unreadable"
+    stored = repr(result.as_dict())
+    assert "sekret" not in stored
+    assert "password=" not in stored
+    assert not workspace.exists()
 
 
 def test_unknown_runtime_is_not_echoed() -> None:

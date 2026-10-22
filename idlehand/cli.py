@@ -23,7 +23,7 @@ from idlehand.links import LinkError, apply_link
 from idlehand.node import serve
 from idlehand.peers import user_add_peer
 from idlehand.process import alive_pid, start_node, stop_node
-from idlehand.sandbox import build_container_argv, detect_runtime, probe_command, run
+from idlehand.sandbox import build_container_argv, detect_runtime, probe_command, run, sandbox_limits
 from idlehand.subscriptions import SUBSCRIPTION_NAMES, inspect_subscription
 
 RULE_KEYS = (
@@ -229,16 +229,25 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
         shown = runtime or "none"
         print(f"runtime: {shown}")
         if shown in {"docker", "podman"}:
-            workspace = home / "workspaces" / "spec"
-            argv = build_container_argv(
-                shown,
-                workspace,
-                probe_command(shown),
-                image=config["sandbox"]["image"],
-                memory=config["sandbox"]["memory"],
-                cpus=config["sandbox"]["cpus"],
+            limits = sandbox_limits(
+                config["sandbox"].get("image", "python:3.12-slim"),
+                config["sandbox"].get("memory", "512m"),
+                config["sandbox"].get("cpus", "1"),
             )
-            print(" ".join(argv))
+            if limits is None:
+                print("sandbox limit is unreadable")
+            else:
+                image, memory, cpus = limits
+                workspace = home / "workspaces" / "spec"
+                argv = build_container_argv(
+                    shown,
+                    workspace,
+                    probe_command(shown),
+                    image=image,
+                    memory=memory,
+                    cpus=cpus,
+                )
+                print(" ".join(argv))
         elif shown == "namespace":
             print("namespace jail: private copy of the command, workspace mounted at /work, no network, empty environment")
         elif shown == "bwrap":

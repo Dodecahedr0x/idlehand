@@ -7,6 +7,7 @@ only. If no runtime is available, the command is not run on the host.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +57,20 @@ class SandboxResult:
 
 
 _KNOWN_RUNTIMES = {"auto", "none", "docker", "podman", "namespace", "bwrap"}
+_IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}")
+_MEMORY = re.compile(r"[1-9][0-9]{0,5}[kKmMgG]?")
+_CPUS = re.compile(r"[0-9]{1,2}(?:\.[0-9]{1,3})?")
+
+
+def sandbox_limits(image: object, memory: object, cpus: object) -> tuple[str, str, str] | None:
+    """Image, memory, and cpu settings, or None when one is not a plain value."""
+    if not isinstance(image, str) or _IMAGE.fullmatch(image) is None or ".." in image:
+        return None
+    if not isinstance(memory, str) or _MEMORY.fullmatch(memory) is None:
+        return None
+    if not isinstance(cpus, str) or _CPUS.fullmatch(cpus) is None:
+        return None
+    return image, memory, cpus
 
 
 def detect_runtime(configured: str = "auto") -> str | None:
@@ -333,6 +348,10 @@ def run(
     if chosen is None:
         label = runtime if isinstance(runtime, str) and runtime in _KNOWN_RUNTIMES else "none"
         return _refused(label, "no sandbox runtime is available; refused to run on the host", command)
+    limits = sandbox_limits(image, memory, cpus)
+    if limits is None:
+        return _refused(chosen, "sandbox limit is unreadable", command)
+    image, memory, cpus = limits
     if workspace.is_symlink() or workspace.parent.is_symlink():
         return _refused(runtime, "refusing to follow a workspace symlink", command)
     workspace.mkdir(parents=True, exist_ok=True)

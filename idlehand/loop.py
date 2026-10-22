@@ -36,7 +36,7 @@ from idlehand.peers import (
     publish_document,
     review_second_degree,
 )
-from idlehand.sandbox import detect_runtime, run
+from idlehand.sandbox import detect_runtime, run, sandbox_limits
 from idlehand.subscriptions import inspect_subscription, subscription_command
 from idlehand.trust import extend_trust
 from idlehand.usage import claude_argv, plan_with_claude
@@ -423,6 +423,16 @@ def _prepare_cycle(
         refusal = "sandbox runtime is unreadable"
     elif runtime is None:
         refusal = "no sandbox runtime is available; refused to run on the host"
+    limits = None
+    if isinstance(sandbox_cfg, dict):
+        limits = sandbox_limits(
+            sandbox_cfg.get("image", "python:3.12-slim"),
+            sandbox_cfg.get("memory", "512m"),
+            sandbox_cfg.get("cpus", "1"),
+        )
+    if not refusal and limits is None:
+        refusal = "sandbox limit is unreadable"
+    image, memory, cpus = limits if limits is not None else ("python:3.12-slim", "512m", "1")
     return {
         "repo_url": repo_url,
         "recorded_url": recorded_url,
@@ -431,9 +441,9 @@ def _prepare_cycle(
         "command": command,
         "runtime": runtime,
         "configured_runtime": configured_runtime,
-        "image": config["sandbox"]["image"],
-        "memory": config["sandbox"]["memory"],
-        "cpus": config["sandbox"]["cpus"],
+        "image": image,
+        "memory": memory,
+        "cpus": cpus,
         "workspace": _workspace(home, repo_url),
         "planner_home": home,
         "plan_cli": status.binary if status.name == "claude" and status.connected and not demo and not refusal else "",
