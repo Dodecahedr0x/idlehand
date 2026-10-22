@@ -36,12 +36,22 @@ def snapshot(home: Path) -> dict[str, Any]:
         config, config_readable = {}, True
     sources, sources_readable = _optional(load_sources, home, [])
     peers, peers_readable = _optional(load_peers, home, [])
-    try:
-        state = read_json(state_path(home))
-    except (OSError, UnicodeError, ValueError):
+    state_file = state_path(home)
+    state_readable = True
+    if state_file.is_symlink():
         state = {}
-    if not isinstance(state, dict):
-        state = {}
+        state_readable = False
+    else:
+        try:
+            state = read_json(state_file)
+        except (OSError, UnicodeError, ValueError):
+            state = {}
+            state_readable = False
+        if state is None:
+            state = {}
+        elif not isinstance(state, dict):
+            state = {}
+            state_readable = False
     pid = alive_pid(home)
     return {
         "home": str(home),
@@ -58,6 +68,7 @@ def snapshot(home: Path) -> dict[str, Any]:
         "trust": load_trust(home),
         "trust_readable": trust_is_readable(home),
         "state": state,
+        "state_readable": state_readable,
     }
 
 
@@ -97,7 +108,7 @@ def render_text(home: Path) -> str:
     spent = estimated + metered
     limit = ledger.get("limit_tokens", snap["spending_limit_tokens"])
     metering = ledger.get("metering") or "local-estimate"
-    if not estimated_ok or not metered_ok:
+    if snap.get("state_readable") is False or not estimated_ok or not metered_ok:
         spending_detail = "spending ledger is unreadable"
     elif metering == "reported":
         spending_detail = "reported by the subscription"

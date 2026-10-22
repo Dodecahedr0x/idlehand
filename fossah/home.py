@@ -55,6 +55,8 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def read_json(path: Path) -> Any:
+    if path.is_symlink():
+        raise ValueError("refusing to follow a symlink")
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))

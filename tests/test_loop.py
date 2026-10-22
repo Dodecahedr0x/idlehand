@@ -1574,3 +1574,60 @@ def test_analytics_shows_spending_and_trust_when_lists_are_unreadable(tmp_path: 
     assert "refused link https://github.com/org/repo — repository URL embeds credentials" in text
     rendered = text + render_json(home)
     assert "sekret" not in rendered
+
+
+def test_state_symlink_does_not_reset_the_ledger(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["spending_limit_tokens"] = 100
+    config["estimate_tokens_per_cycle"] = 30
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    (home / "trust.json").write_text(
+        json.dumps(
+            [
+                {
+                    "kind": "link",
+                    "subject": "https://github.com/org/repo",
+                    "accepted": False,
+                    "reason": "repository URL embeds credentials",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps(
+            {
+                "ledger": {
+                    "estimated_tokens": 0,
+                    "metered_tokens": 0,
+                    "metering": "local-estimate",
+                },
+                "plans": [{"repo": "sekret", "contributed": True, "pushed": False}],
+                "loop": {"cycles": 0, "status": "running", "reason": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = home / "state.json"
+    if state_file.exists() or state_file.is_symlink():
+        state_file.unlink()
+    state_file.symlink_to(outside)
+    before = render_text(home)
+    assert "sekret" not in before
+    assert "spending ledger is unreadable" in before
+    assert "refused link https://github.com/org/repo" in before
+    state = tick(home)
+    assert outside.read_text(encoding="utf-8").count("sekret") == 1
+    assert not state_file.is_symlink()
+    assert state["loop"]["reason"] == "spending ledger is unreadable"
+    assert state["ledger"]["estimated_tokens"] == 100
+    assert state["plans"] == []
+    assert "sekret" not in json.dumps(state)
+    assert list((home / "workspaces").iterdir()) == []
