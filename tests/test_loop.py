@@ -1168,6 +1168,65 @@ def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     assert state["loop"]["status"] == "running"
 
 
+def test_quoted_flags_are_not_shown_as_contributions_or_accepted(tmp_path: Path) -> None:
+    from idlehand.config import state_path
+    from idlehand.home import write_json
+    from idlehand.trust import trust_path
+
+    home = tmp_path / "home"
+    _ready(home)
+    write_json(
+        state_path(home),
+        {
+            "subscription": {
+                "connected": "false",
+                "name": "claude",
+                "binary": "claude",
+                "detail": "subscription is not connected",
+            },
+            "plans": [
+                {
+                    "action": "test",
+                    "repo": "https://github.com/org/repo",
+                    "demo": "false",
+                    "contributed": "false",
+                    "upstream_cloned": "false",
+                    "subscription_executed": "false",
+                    "subscription_command": ["claude", "-p"],
+                    "fetch": {"reason": "not fetched"},
+                    "sandbox": {"reason": "should not win"},
+                }
+            ],
+            "ledger": {"estimated_tokens": 0, "metered_tokens": 0, "metering": "local-estimate"},
+        },
+    )
+    write_json(
+        trust_path(home),
+        [
+            {
+                "kind": "link",
+                "subject": "https://github.com/org/repo",
+                "accepted": "false",
+                "reason": "https git repository URL",
+            }
+        ],
+    )
+    text = render_text(home)
+    assert "contributions recorded: 0" in text
+    assert "nothing was contributed" in text
+    assert "contributed=no" in text
+    assert "cloned=no" in text
+    assert "not fetched" in text
+    assert "should not win" not in text
+    assert " demo " not in text
+    assert "not run" in text
+    assert "ran on the trusted side" not in text
+    assert "subscription is not connected" in text
+    assert "claude connected" not in text
+    assert "refused link https://github.com/org/repo" in text
+    assert "accepted link" not in text
+
+
 def test_corrupt_plan_entry_does_not_skip_the_spending_stop(tmp_path: Path, monkeypatch) -> None:
     from idlehand.config import state_path
     from idlehand.home import write_json

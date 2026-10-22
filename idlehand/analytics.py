@@ -99,7 +99,7 @@ def render_text(home: Path) -> str:
         node_line = "not running"
     if not subscription:
         sub_line = "not configured"
-    elif subscription.get("connected"):
+    elif subscription.get("connected") is True:
         sub_line = f"{subscription.get('name')} connected ({subscription.get('binary')})"
     else:
         sub_line = subscription.get("detail") or "subscription is not connected"
@@ -117,7 +117,7 @@ def render_text(home: Path) -> str:
     else:
         spending_detail = "local estimate, not billed usage"
     pushed, _pushed_ok = _whole(state.get("contributions_pushed", 0) if isinstance(state, dict) else 0)
-    recorded = sum(1 for plan in plans if isinstance(plan, dict) and plan.get("contributed"))
+    recorded = sum(1 for plan in plans if isinstance(plan, dict) and plan.get("contributed") is True)
     direct = snap["peers"]
     learned = [peer for peer in direct if peer.get("source") == "peers-of-peers"]
     lines = [
@@ -148,7 +148,7 @@ def render_text(home: Path) -> str:
         for item in trust[-8:]:
             if not isinstance(item, dict):
                 continue
-            mark = "accepted" if item.get("accepted") else "refused"
+            mark = "accepted" if item.get("accepted") is True else "refused"
             lines.append(f"    {mark} {item.get('kind', '')} {item.get('subject', '')} — {item.get('reason', '')}")
     if peers_runtime.get("last_error"):
         lines.append(f"  peer fetch: {peers_runtime['last_error']}")
@@ -159,22 +159,22 @@ def render_text(home: Path) -> str:
         for plan in plans[-5:]:
             if not isinstance(plan, dict):
                 continue
-            demo = " demo" if plan.get("demo") else ""
+            demo = " demo" if plan.get("demo") is True else ""
             sandbox = plan.get("sandbox") or {}
             fetch = plan.get("fetch") or {}
-            contributed = "yes" if plan.get("contributed") else "no"
-            if not plan.get("upstream_cloned") and fetch.get("reason"):
+            contributed = "yes" if plan.get("contributed") is True else "no"
+            if plan.get("upstream_cloned") is not True and fetch.get("reason"):
                 detail = fetch.get("reason")
             else:
                 detail = sandbox.get("reason") or fetch.get("reason") or ""
-            cloned = "yes" if plan.get("upstream_cloned") else "no"
+            cloned = "yes" if plan.get("upstream_cloned") is True else "no"
             lines.append(
                 f"    {plan.get('action')}{demo} {plan.get('repo')} "
                 f"contributed={contributed} cloned={cloned} {detail}".rstrip()
             )
             command = _command(plan.get("subscription_command"))
             if command:
-                ran = "ran on the trusted side" if plan.get("subscription_executed") else "not run"
+                ran = "ran on the trusted side" if plan.get("subscription_executed") is True else "not run"
                 lines.append(f"      command ({ran}): {command}")
     return "\n".join(lines) + "\n"
 
