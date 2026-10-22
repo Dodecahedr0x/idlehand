@@ -835,6 +835,50 @@ def test_reported_tokens_stay_on_the_ledger_when_the_sandbox_fails(tmp_path: Pat
     assert state["contributions_pushed"] == 0
 
 
+def test_zero_report_and_refused_sandbox_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
+    from fossah.sandbox import SandboxResult
+
+    home = tmp_path / "home"
+    _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":0,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 80
+    config["spending_limit_tokens"] = 200
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+
+    def refused(*args, **kwargs):
+        return SandboxResult(
+            runtime="namespace",
+            invoked=False,
+            ok=False,
+            exit_code=97,
+            stdout="",
+            stderr="sandbox setup failed",
+            reason="sandbox setup failed",
+            argv=["/usr/bin/python3"],
+        )
+
+    monkeypatch.setattr("fossah.loop.run", refused)
+    first = tick(home)
+    second = tick(home)
+    assert [plan["contributed"] for plan in second["plans"]] == [False, False]
+    assert [plan["usage"] for plan in second["plans"]] == ["reported", "reported"]
+    assert second["ledger"]["metered_tokens"] == 0
+    assert second["ledger"]["estimated_tokens"] == 0
+    assert second["ledger"]["metering"] == "reported"
+    assert second["loop"]["status"] == "running"
+    assert first["plans"][0]["metered_tokens"] == 0
+    text = render_text(home)
+    assert "reported by the subscription" in text
+    assert "nothing was contributed" in text
+
+
 def test_usage_on_stderr_is_not_treated_as_a_report(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     invoked = tmp_path / "claude-invoked"
