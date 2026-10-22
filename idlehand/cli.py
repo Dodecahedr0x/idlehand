@@ -17,6 +17,22 @@ from idlehand.config import (
     save_config,
     sources_path,
 )
+from idlehand.forge import (
+    ForgeResult,
+    create_issue,
+    create_pull_request,
+    delegate_repo,
+    delegation_status,
+    list_manageable,
+    load_delegated,
+    parse_number,
+    registered_forges,
+    revoke_repo,
+    send_issue_draft,
+    send_pull_request_draft,
+    update_issue,
+    update_pull_request,
+)
 from idlehand.handler import register_protocol_handler
 from idlehand.home import resolve_home
 from idlehand.links import LinkError, apply_link
@@ -274,6 +290,162 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
     return 0
 
 
+def _finish(result: ForgeResult) -> int:
+    print(result.detail, file=sys.stdout if result.ok else sys.stderr)
+    return 0 if result.ok else 1
+
+
+def _body_text(args: argparse.Namespace) -> tuple[bool, str]:
+    path_text = getattr(args, "body_file", "") or ""
+    inline = getattr(args, "body", None)
+    if path_text and inline is not None:
+        print("pass either --body or --body-file", file=sys.stderr)
+        return False, ""
+    if not path_text:
+        return True, inline or ""
+    path = Path(path_text)
+    if path.is_symlink() or not path.is_file():
+        print("the body file is unreadable", file=sys.stderr)
+        return False, ""
+    try:
+        if path.stat().st_size > 65_000:
+            print("the body is too long", file=sys.stderr)
+            return False, ""
+        return True, path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        print("the body file is unreadable", file=sys.stderr)
+        return False, ""
+
+
+def cmd_github(args: argparse.Namespace) -> int:
+    home = _home(args)
+    ensure_home(home)
+    provider = args.provider
+    action = args.forge_action
+    if action == "status":
+        account = delegation_status(provider)
+        print(account.detail, file=sys.stdout if account.connected else sys.stderr)
+        return 0 if account.connected else 1
+    if action == "repos":
+        repos, detail = list_manageable(provider)
+        if repos is None:
+            print(detail, file=sys.stderr)
+            return 1
+        if not repos:
+            print("No owned or administered repositories.")
+        for repo in repos:
+            print(f"{repo.name}  {repo.role}")
+        if detail:
+            print(detail)
+        return 0
+    if action == "delegated":
+        rows = load_delegated(home)
+        if rows is None:
+            print("the delegation list is unreadable", file=sys.stderr)
+            return 1
+        mine = [row for row in rows if row[0] == provider]
+        if not mine:
+            print("No repositories are delegated.")
+            return 0
+        for item_provider, name in mine:
+            print(f"{item_provider} {name}")
+        return 0
+    if action == "delegate":
+        return _finish(delegate_repo(home, provider, args.repo))
+    if action == "revoke":
+        return _finish(revoke_repo(home, provider, args.repo))
+    if action in {"issue-create", "issue-update", "pr-create", "pr-update"}:
+        ok, body = _body_text(args)
+        if not ok:
+            return 1
+        title = getattr(args, "title", "") or ""
+        if action == "issue-create":
+            return _finish(create_issue(home, provider, args.repo, title, body))
+        if action == "pr-create":
+            return _finish(
+                create_pull_request(home, provider, args.repo, title, body, args.head, args.base or "")
+            )
+        number = parse_number(args.number)
+        if number is None:
+            label = "issue" if action == "issue-update" else "pull request"
+            print(f"the {label} number is unreadable", file=sys.stderr)
+            return 1
+        if action == "issue-update":
+            return _finish(update_issue(home, provider, args.repo, number, title, body))
+        return _finish(update_pull_request(home, provider, args.repo, number, title, body))
+    if action == "issue-send":
+        return _finish(send_issue_draft(home, provider, args.repo))
+    if action == "pr-send":
+        return _finish(send_pull_request_draft(home, provider, args.repo, args.head, args.base or ""))
+    print("IdleHand has no forge provider for that name", file=sys.stderr)
+    return 1
+
+
+def _add_text_flags(parser: argparse.ArgumentParser, *, title_required: bool) -> None:
+    if title_required:
+        parser.add_argument("--title", required=True)
+    else:
+        parser.add_argument("--title", default="")
+    parser.add_argument("--body", default=None)
+    parser.add_argument("--body-file", default="")
+
+
+def _add_forge_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str) -> None:
+    forge = sub.add_parser(name, help=f"delegate and manage {name} repositories you own or administer")
+    commands = forge.add_subparsers(dest="forge_group", required=True)
+
+    status = commands.add_parser("status", help="show whether the forge CLI is logged in")
+    status.set_defaults(func=cmd_github, provider=name, forge_action="status")
+
+    repos = commands.add_parser("repos", help="list repositories this login owns or administers")
+    repos.set_defaults(func=cmd_github, provider=name, forge_action="repos")
+
+    delegated = commands.add_parser("delegated", help="list repositories explicitly delegated to this node")
+    delegated.set_defaults(func=cmd_github, provider=name, forge_action="delegated")
+
+    delegate = commands.add_parser("delegate", help="delegate management of one repository")
+    delegate.add_argument("repo")
+    delegate.set_defaults(func=cmd_github, provider=name, forge_action="delegate")
+
+    revoke = commands.add_parser("revoke", help="revoke management of one repository")
+    revoke.add_argument("repo")
+    revoke.set_defaults(func=cmd_github, provider=name, forge_action="revoke")
+
+    issue = commands.add_parser("issue", help="create, update, or send an issue on a delegated repository")
+    issue_commands = issue.add_subparsers(dest="issue_action", required=True)
+    issue_create = issue_commands.add_parser("create")
+    issue_create.add_argument("repo")
+    _add_text_flags(issue_create, title_required=True)
+    issue_create.set_defaults(func=cmd_github, provider=name, forge_action="issue-create")
+    issue_update = issue_commands.add_parser("update")
+    issue_update.add_argument("repo")
+    issue_update.add_argument("number")
+    _add_text_flags(issue_update, title_required=False)
+    issue_update.set_defaults(func=cmd_github, provider=name, forge_action="issue-update")
+    issue_send = issue_commands.add_parser("send", help="send the local issue draft")
+    issue_send.add_argument("repo")
+    issue_send.set_defaults(func=cmd_github, provider=name, forge_action="issue-send")
+
+    pull = commands.add_parser("pr", help="create, update, or send a pull request on a delegated repository")
+    pull_commands = pull.add_subparsers(dest="pull_action", required=True)
+    pull_create = pull_commands.add_parser("create")
+    pull_create.add_argument("repo")
+    pull_create.add_argument("--head", required=True)
+    pull_create.add_argument("--base", default="")
+    _add_text_flags(pull_create, title_required=True)
+    pull_create.set_defaults(func=cmd_github, provider=name, forge_action="pr-create")
+    pull_update = pull_commands.add_parser("update")
+    pull_update.add_argument("repo")
+    pull_update.add_argument("number")
+    _add_text_flags(pull_update, title_required=False)
+    pull_update.set_defaults(func=cmd_github, provider=name, forge_action="pr-update")
+    pull_send = pull_commands.add_parser("send", help="send the local pull request draft")
+    pull_send.add_argument("repo")
+    pull_send.add_argument("--head", required=True)
+    pull_send.add_argument("--base", default="")
+    pull_send.set_defaults(func=cmd_github, provider=name, forge_action="pr-send")
+
+
 def cmd_node(args: argparse.Namespace) -> int:
     home = _home(args)
     if alive_pid(home):
@@ -351,6 +523,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sources = sub.add_parser("sources", help="print the local source list")
     sources.set_defaults(func=cmd_sources)
+
+    for forge_name in registered_forges():
+        _add_forge_parser(sub, forge_name)
 
     sandbox = sub.add_parser("sandbox", help="show or run the repo sandbox")
     sand_sub = sandbox.add_subparsers(dest="action", required=True)

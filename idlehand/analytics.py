@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from idlehand.config import load_config, load_peers, load_sources, state_path
+from idlehand.forge import load_delegated
 from idlehand.home import read_json
 from idlehand.process import alive_pid
 from idlehand.trust import load_trust, trust_is_readable
@@ -52,6 +53,7 @@ def snapshot(home: Path) -> dict[str, Any]:
         elif not isinstance(state, dict):
             state = {}
             state_readable = False
+    delegated = load_delegated(home)
     pid = alive_pid(home)
     return {
         "home": str(home),
@@ -67,6 +69,8 @@ def snapshot(home: Path) -> dict[str, Any]:
         "peers_readable": peers_readable,
         "trust": load_trust(home),
         "trust_readable": trust_is_readable(home),
+        "delegated": delegated or [],
+        "delegated_readable": delegated is not None,
         "state": state,
         "state_readable": state_readable,
     }
@@ -132,6 +136,13 @@ def render_text(home: Path) -> str:
         f"  peers: {len(direct)} direct, {len(learned)} added from peers of peers",
         f"  remote repo lists ignored: {peers_runtime.get('ignored_remote_repos', 0)}",
     ]
+    if snap.get("delegated_readable") is False:
+        lines.append("  delegation list is unreadable")
+    else:
+        delegated_rows = snap.get("delegated") or []
+        lines.append(f"  delegated: {len(delegated_rows)}")
+        for provider, name in delegated_rows:
+            lines.append(f"    {provider} {name}")
     if snap.get("config_readable") is False:
         lines.append("  config is unreadable")
     if snap.get("sources_readable") is False:

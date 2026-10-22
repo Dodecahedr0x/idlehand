@@ -100,6 +100,31 @@ Second-degree `file:` URLs are ignored. URLs with a username or password are rej
 
 The listen port is bound to loopback until you change `publish.host`.
 
+## GitHub delegation
+
+Management is separate from the contribution loop, and nothing is delegated automatically. GitHub is the only forge. IdleHand uses the `gh` login already on the machine. It does not store a token.
+
+```bash
+idlehand github status
+idlehand github repos
+idlehand github delegate octocat/hello
+idlehand github revoke octocat/hello
+idlehand github delegated
+```
+
+`github repos` lists repositories that login owns or administers. `delegate` records one of them. Issues and pull requests run `gh` on the trusted side, and only for a delegated repository:
+
+```bash
+idlehand github issue create octocat/hello --title "Broken link" --body "The README link 404s."
+idlehand github issue update octocat/hello 7 --body "Still broken."
+idlehand github issue send octocat/hello
+idlehand github pr create octocat/hello --title "Fix the link" --body "Updates the README." --head fix-link
+idlehand github pr update octocat/hello 4 --title "Fix the link"
+idlehand github pr send octocat/hello --head fix-link
+```
+
+`issue send` and `pr send` use the local draft the contribution loop kept for that repository. `pr create` opens a pull request for a branch already on GitHub. It does not push. If `gh` is missing, not logged in, or does not confirm the result, the command says so and stops.
+
 ## Sandbox
 
 Repository commands run in a container when Docker or Podman is installed. Otherwise IdleHand uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no network, and a cleared environment. Home, credentials, and the rest of the host filesystem are not mounted. If no runtime can start, IdleHand refuses the command instead of running it on the host.
@@ -133,7 +158,8 @@ Real:
 Not done in this slice:
 
 - Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
-- Issue and pull request drafts are copied into the IdleHand home. Nothing is pushed. `contributions pushed` stays at 0.
+- The contribution loop copies issue and pull request drafts into the IdleHand home and does not send them. `contributions pushed` stays at 0. Sending a draft is the explicit `idlehand github issue send` or `pr send` command, and only for a repository you delegated.
+- Forges other than GitHub.
 - Demo output is not a contribution.
 
 ## Tests
