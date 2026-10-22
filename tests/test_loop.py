@@ -1459,3 +1459,118 @@ def test_atomic_write_does_not_follow_a_temp_symlink(tmp_path: Path) -> None:
     assert destination.read_text(encoding="utf-8") == "keep-dest"
     assert not target.is_symlink()
     assert target.read_text(encoding="utf-8") == '{"ok": true}\n'
+
+
+def test_unreadable_config_stops_before_a_clone(tmp_path: Path, monkeypatch) -> None:
+    from fossah.config import state_path
+    from fossah.home import write_json
+    from fossah.loop import load_state
+
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    stored = load_state(home, config)
+    stored["ledger"]["estimated_tokens"] = 25
+    write_json(state_path(home), stored)
+    (home / "config.toml").write_text("{\nsekret\n", encoding="utf-8")
+    state = tick(home)
+    assert state["loop"]["reason"] == "config is unreadable"
+    assert state["loop"]["status"] == "stopped"
+    assert state["ledger"]["estimated_tokens"] == 25
+    assert state["plans"] == []
+    assert "sekret" not in json.dumps(state)
+    assert list((home / "workspaces").iterdir()) == []
+
+
+def test_unreadable_source_list_does_not_clone(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    (home / "sources.toml").write_text("{\nsekret\n", encoding="utf-8")
+    state = tick(home)
+    assert state["loop"]["reason"] == "the local source list is unreadable"
+    assert state["plans"] == []
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert "sekret" not in json.dumps(state)
+    assert "sekret" in (home / "sources.toml").read_text(encoding="utf-8")
+    assert list((home / "workspaces").iterdir()) == []
+
+
+def test_unreadable_peer_list_still_contributes(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    (home / "peers.toml").write_text("{\nsekret\n", encoding="utf-8")
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert state["peers_runtime"]["last_error"] == "the peer list is unreadable"
+    assert "sekret" not in json.dumps(state)
+    assert "sekret" in (home / "peers.toml").read_text(encoding="utf-8")
+    assert not (home / "publish.json").exists()
+
+
+def test_analytics_shows_spending_and_trust_when_lists_are_unreadable(tmp_path: Path) -> None:
+    from fossah.analytics import render_json
+    from fossah.config import state_path
+    from fossah.home import write_json
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    (home / "config.toml").write_text("{\nsekret\n", encoding="utf-8")
+    (home / "sources.toml").write_text("{\nsekret\n", encoding="utf-8")
+    (home / "peers.toml").write_text("{\nsekret\n", encoding="utf-8")
+    write_json(
+        state_path(home),
+        {
+            "ledger": {
+                "estimated_tokens": 10,
+                "metered_tokens": 0,
+                "limit_tokens": 100,
+                "metering": "local-estimate",
+            },
+            "plans": [],
+            "loop": {"status": "stopped", "reason": "config is unreadable"},
+        },
+    )
+    (home / "trust.json").write_text(
+        json.dumps(
+            [
+                {
+                    "kind": "link",
+                    "subject": "https://github.com/org/repo",
+                    "accepted": False,
+                    "reason": "repository URL embeds credentials",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    text = render_text(home)
+    assert "spending: 10 / 100" in text
+    assert "config is unreadable" in text
+    assert "the local source list is unreadable" in text
+    assert "the peer list is unreadable" in text
+    assert "refused link https://github.com/org/repo — repository URL embeds credentials" in text
+    rendered = text + render_json(home)
+    assert "sekret" not in rendered

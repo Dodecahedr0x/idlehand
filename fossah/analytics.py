@@ -21,8 +21,21 @@ def _whole(value: object) -> tuple[int, bool]:
     return value, True
 
 
+def _optional(loader, home: Path, default: Any) -> tuple[Any, bool]:
+    try:
+        return loader(home), True
+    except (OSError, UnicodeError, ValueError):
+        return default, False
+
+
 def snapshot(home: Path) -> dict[str, Any]:
-    config = load_config(home) if (home / "config.toml").exists() else {}
+    config_exists = (home / "config.toml").exists()
+    if config_exists:
+        config, config_readable = _optional(load_config, home, {})
+    else:
+        config, config_readable = {}, True
+    sources, sources_readable = _optional(load_sources, home, [])
+    peers, peers_readable = _optional(load_peers, home, [])
     try:
         state = read_json(state_path(home))
     except (OSError, UnicodeError, ValueError):
@@ -34,11 +47,14 @@ def snapshot(home: Path) -> dict[str, Any]:
         "home": str(home),
         "pid": pid,
         "node_running": pid is not None,
-        "config_present": bool(config),
+        "config_present": bool(config) or (config_exists and not config_readable),
+        "config_readable": config_readable,
         "spending_limit_tokens": config.get("spending_limit_tokens"),
         "rules": config.get("rules", {}),
-        "sources": load_sources(home) if (home / "sources.toml").exists() else [],
-        "peers": load_peers(home) if (home / "peers.toml").exists() else [],
+        "sources": sources,
+        "sources_readable": sources_readable,
+        "peers": peers,
+        "peers_readable": peers_readable,
         "trust": load_trust(home),
         "trust_readable": trust_is_readable(home),
         "state": state,
@@ -105,6 +121,12 @@ def render_text(home: Path) -> str:
         f"  peers: {len(direct)} direct, {len(learned)} added from peers of peers",
         f"  remote repo lists ignored: {peers_runtime.get('ignored_remote_repos', 0)}",
     ]
+    if snap.get("config_readable") is False:
+        lines.append("  config is unreadable")
+    if snap.get("sources_readable") is False:
+        lines.append("  the local source list is unreadable")
+    if snap.get("peers_readable") is False:
+        lines.append("  the peer list is unreadable")
     if recorded == 0:
         lines.append("  nothing was contributed")
     if snap.get("trust_readable") is False:

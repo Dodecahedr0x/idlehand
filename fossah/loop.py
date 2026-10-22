@@ -102,6 +102,24 @@ def _fetch_interval(value: object) -> float | None:
     return float(value)
 
 
+def _mark_unreadable(home: Path, reason: str) -> dict[str, Any]:
+    """Stop before a cycle. Leave token counts as they were stored."""
+    try:
+        raw = read_json(state_path(home))
+    except (OSError, UnicodeError, ValueError):
+        raw = None
+    if not isinstance(raw, dict):
+        raw = fresh_state({"spending_limit_tokens": 0})
+    loop = raw.get("loop")
+    if not isinstance(loop, dict):
+        loop = {}
+        raw["loop"] = loop
+    loop["status"] = "stopped"
+    loop["reason"] = reason
+    write_json(state_path(home), raw)
+    return raw
+
+
 def _limit_of(config: dict[str, Any]) -> int | None:
     """The spending limit, or None when the setting is not a non-negative integer."""
     return _ledger_count(config.get("spending_limit_tokens"))
@@ -522,21 +540,38 @@ def _stamp_node(state: dict[str, Any], status: Any) -> None:
     state["node"]["heartbeat_at"] = now_iso()
 
 
-def _persist(home: Path, config: dict[str, Any], peers: list[dict[str, Any]], sources: list[dict[str, str]], state: dict[str, Any]) -> dict[str, Any]:
+def _persist(
+    home: Path,
+    config: dict[str, Any],
+    peers: list[dict[str, Any]],
+    sources: list[dict[str, str]],
+    state: dict[str, Any],
+    *,
+    write_publish: bool = True,
+) -> dict[str, Any]:
     state["contributions_pushed"] = sum(
         1 for plan in state["plans"] if isinstance(plan, dict) and plan.get("pushed") is True
     )
     state["ledger"]["limit_tokens"] = _limit_of(config) or 0
     write_json(state_path(home), state)
-    _write_publish(home, config, peers, sources, str(state.get("publish", {}).get("url", "")))
+    if write_publish:
+        _write_publish(home, config, peers, sources, str(state.get("publish", {}).get("url", "")))
     return state
 
 
 def tick(home: Path) -> dict[str, Any]:
     epoch = time.time()
     with home_lock(home):
-        config = load_config(home)
-        peers = load_peers(home)
+        try:
+            config = load_config(home)
+        except (OSError, UnicodeError, ValueError):
+            return _mark_unreadable(home, "config is unreadable")
+        try:
+            peers = load_peers(home)
+            peers_ok = True
+        except (OSError, UnicodeError, ValueError):
+            peers = []
+            peers_ok = False
         state = load_state(home, config)
         listen_url = str(state.get("publish", {}).get("url", ""))
     interval = _fetch_interval(config["publish"].get("peer_fetch_interval_seconds"))
@@ -548,18 +583,31 @@ def tick(home: Path) -> dict[str, Any]:
     id_updates: dict[str, str] = {}
     trust_decisions: list[dict[str, Any]] = []
     fetched = False
-    if interval is not None and peers and epoch - last >= interval:
+    if peers_ok and interval is not None and peers and epoch - last >= interval:
         fetched = True
         additions, ignored, errors, id_updates, trust_decisions = _fetch_peers(
             peers, config=config, listen_url=listen_url, home=home
         )
     job: dict[str, Any] | None = None
     with home_lock(home):
-        config = load_config(home)
-        sources = load_sources(home)
-        peers = load_peers(home)
+        try:
+            config = load_config(home)
+        except (OSError, UnicodeError, ValueError):
+            return _mark_unreadable(home, "config is unreadable")
+        try:
+            sources = load_sources(home)
+            sources_ok = True
+        except (OSError, UnicodeError, ValueError):
+            sources = []
+            sources_ok = False
+        try:
+            peers = load_peers(home)
+            peers_ok = True
+        except (OSError, UnicodeError, ValueError):
+            peers = []
+            peers_ok = False
         state = load_state(home, config)
-        if id_updates:
+        if peers_ok and id_updates:
             for peer in peers:
                 try:
                     key = normalize_peer_url(str(peer["url"]))
@@ -568,7 +616,7 @@ def tick(home: Path) -> dict[str, Any]:
                 if key in id_updates and not peer.get("id"):
                     peer["id"] = id_updates[key]
         added = 0
-        if additions:
+        if peers_ok and additions:
             known = set()
             for peer in peers:
                 try:
@@ -589,7 +637,9 @@ def tick(home: Path) -> dict[str, Any]:
                 known.add(candidate.url)
                 added += 1
             state["peers_runtime"]["added"] = _counter(state["peers_runtime"].get("added")) + added
-        if interval is None:
+        if not peers_ok:
+            state["peers_runtime"]["last_error"] = "the peer list is unreadable"
+        elif interval is None:
             state["peers_runtime"]["last_error"] = "peer fetch interval is unreadable"
         elif fetched:
             state["peers_runtime"]["last_fetch_epoch"] = epoch
@@ -599,7 +649,12 @@ def tick(home: Path) -> dict[str, Any]:
             )
             state["peers_runtime"]["last_error"] = "; ".join(errors)[:500]
             extend_trust(home, trust_decisions)
-        save_peers(home, peers)
+        if peers_ok:
+            save_peers(home, peers)
+        if not sources_ok:
+            state["loop"]["status"] = "stopped"
+            state["loop"]["reason"] = "the local source list is unreadable"
+            return _persist(home, config, peers, sources, state, write_publish=False)
         status = inspect_subscription(str(config.get("subscription", "")))
         _stamp_node(state, status)
         demo = bool(config.get("demo"))
@@ -614,16 +669,29 @@ def tick(home: Path) -> dict[str, Any]:
         if job is None or job["refusal"]:
             if job is not None:
                 _commit_cycle(home, config, state, job, _run_job(job))
-            return _persist(home, config, peers, sources, state)
-        _persist(home, config, peers, sources, state)
+            return _persist(home, config, peers, sources, state, write_publish=peers_ok)
+        _persist(home, config, peers, sources, state, write_publish=peers_ok)
 
     outcome = _run_job(job)
     with home_lock(home):
-        config = load_config(home)
-        sources = load_sources(home)
-        peers = load_peers(home)
+        try:
+            config = load_config(home)
+        except (OSError, UnicodeError, ValueError):
+            return _mark_unreadable(home, "config is unreadable")
+        try:
+            sources = load_sources(home)
+            sources_ok = True
+        except (OSError, UnicodeError, ValueError):
+            sources = []
+            sources_ok = False
+        try:
+            peers = load_peers(home)
+            peers_ok = True
+        except (OSError, UnicodeError, ValueError):
+            peers = []
+            peers_ok = False
         state = load_state(home, config)
         status = inspect_subscription(str(config.get("subscription", "")))
         _stamp_node(state, status)
         _commit_cycle(home, config, state, job, outcome)
-        return _persist(home, config, peers, sources, state)
+        return _persist(home, config, peers, sources, state, write_publish=peers_ok and sources_ok)

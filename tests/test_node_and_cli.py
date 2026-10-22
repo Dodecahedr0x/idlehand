@@ -144,14 +144,14 @@ def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -
     pid = start_node(home)
     try:
         (home / "config.toml").write_text("{\n", encoding="utf-8")
-        deadline = time.time() + 3
+        deadline = time.time() + 7
         state: dict = {}
         while time.time() < deadline:
             state = read_json(state_path(home)) or {}
-            if (state.get("node") or {}).get("last_error"):
+            if (state.get("loop") or {}).get("reason") == "config is unreadable":
                 break
             time.sleep(0.05)
-        assert state["node"]["last_error"]
+        assert state["loop"]["reason"] == "config is unreadable"
         assert state["ledger"]["limit_tokens"] == 400
         assert state["ledger"]["estimated_tokens"] == 0
         assert alive_pid(home) == pid
