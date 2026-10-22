@@ -22,6 +22,13 @@ from fossah.trust import decision, public_subject
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
+def _scheme_label(scheme: str) -> str:
+    """A scheme safe to show. Anything else is omitted so the raw URL is not stored."""
+    if scheme and scheme[0].isalpha() and all(character.islower() or character.isdigit() or character in "+.-" for character in scheme):
+        return f": {scheme}"
+    return ""
+
+
 @dataclass(frozen=True)
 class PeerCandidate:
     url: str
@@ -38,7 +45,7 @@ def normalize_peer_url(url: str) -> str:
         raise ValueError("peer URLs cannot embed credentials")
     scheme = parsed.scheme.lower()
     if scheme not in {"https", "http", "file"}:
-        raise ValueError(f"unsupported peer URL scheme: {scheme or raw}")
+        raise ValueError(f"unsupported peer URL scheme{_scheme_label(scheme)}")
     host = (parsed.hostname or "").lower()
     if scheme in {"https", "http"} and not host:
         raise ValueError("peer URL needs a host")
@@ -101,7 +108,7 @@ def explain_peer_url(url: str, heuristic: dict[str, Any]) -> tuple[bool, str]:
         return True, "http peer URL"
     if scheme == "http":
         return False, "second-degree peers must use https"
-    return False, f"unsupported peer URL scheme: {scheme}"
+    return False, f"unsupported peer URL scheme{_scheme_label(scheme)}"
 
 
 def peer_url_allowed(url: str, heuristic: dict[str, Any]) -> bool:

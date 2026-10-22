@@ -309,3 +309,27 @@ def test_host_lists_and_self_are_skipped() -> None:
     assert [item.url for item in chosen] == ["https://ok.example/p"]
     assert peer_url_allowed("https://user:secret@ok.example/p", HEURISTIC) is False
     assert normalize_peer_url("https://OK.Example/fossah/publish/") == "https://ok.example/fossah/publish"
+
+
+def test_unsupported_peer_scheme_does_not_keep_the_raw_url(tmp_path) -> None:
+    from fossah.analytics import render_text
+    from fossah.config import ensure_home, save_config, save_peers
+    from fossah.loop import tick
+
+    assert explain_peer_url("password=sekret", HEURISTIC) == (False, "unsupported peer URL scheme")
+    assert explain_peer_url("ssh://git.example/org/repo", HEURISTIC) == (False, "unsupported peer URL scheme: ssh")
+    home = tmp_path / "home"
+    config = ensure_home(home)
+    config["publish"]["peer_fetch_interval_seconds"] = 0
+    save_config(home, config)
+    peer = tmp_path / "peer.json"
+    peer.write_text(
+        json.dumps({"peers": ["password=sekret", "ssh://git.example/org/repo"], "repos": []}),
+        encoding="utf-8",
+    )
+    save_peers(home, [{"url": peer.as_uri(), "id": "", "source": "user", "endorsements": 1}])
+    state = tick(home)
+    blob = json.dumps(state) + (home / "trust.json").read_text(encoding="utf-8") + render_text(home)
+    assert "sekret" not in blob
+    assert "unsupported peer URL scheme" in blob
+    assert "unsupported peer URL scheme: ssh" in blob
