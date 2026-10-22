@@ -1631,3 +1631,27 @@ def test_state_symlink_does_not_reset_the_ledger(tmp_path: Path, monkeypatch) ->
     assert state["plans"] == []
     assert "sekret" not in json.dumps(state)
     assert list((home / "workspaces").iterdir()) == []
+
+
+def test_node_log_symlink_is_not_appended(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    outside = tmp_path / "outside.log"
+    outside.write_text("sekret\n", encoding="utf-8")
+    log = home / "node.log"
+    log.symlink_to(outside)
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert log.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "sekret\n"
+    assert "sekret" not in json.dumps(state)

@@ -97,7 +97,10 @@ def serve(home: Path) -> None:
                 repos=repos,
             ),
         )
-    pid_path(home).write_text(str(os.getpid()), encoding="utf-8")
+    pid_file = pid_path(home)
+    if pid_file.is_symlink():
+        pid_file.unlink()
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
     try:
         while not stopped[0]:
             try:

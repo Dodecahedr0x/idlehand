@@ -160,6 +160,26 @@ def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -
     assert alive_pid(home) is None
 
 
+def test_pid_file_symlink_is_replaced(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    outside = tmp_path / "outside.pid"
+    outside.write_text("sekret\n", encoding="utf-8")
+    pid_file = home / "node.pid"
+    pid_file.symlink_to(outside)
+    pid = start_node(home)
+    try:
+        assert outside.read_text(encoding="utf-8") == "sekret\n"
+        assert not pid_file.is_symlink()
+        assert pid_file.read_text(encoding="utf-8").strip() == str(pid)
+        assert alive_pid(home) == pid
+    finally:
+        stop_node(home)
+    assert outside.read_text(encoding="utf-8") == "sekret\n"
+
+
 def test_uninstalled_subscription_stays_up(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")

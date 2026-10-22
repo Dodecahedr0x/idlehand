@@ -194,6 +194,8 @@ def ensure_home(home: Path) -> dict[str, Any]:
 
 def append_log(home: Path, line: str) -> None:
     path = log_path(home)
+    if path.is_symlink():
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line.rstrip() + "\n")
