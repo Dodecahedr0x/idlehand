@@ -501,7 +501,9 @@ def review_patch(home: Path, raw: str, raw_id: str, checkout: str) -> ForgeResul
         return reported
     if reported != rid:
         return ForgeResult(False, "that checkout is not this repository")
-    checked_out = _run(["patch", "checkout", patch_id, "--repo", rid, "--force"], cwd=path, timeout=60)
+    # Heartwood 1.10 rejects `rad patch checkout --repo` even inside a working
+    # copy. The RID was already confirmed with `rad .` in this directory.
+    checked_out = _run(["patch", "checkout", patch_id, "--force"], cwd=path, timeout=60)
     if checked_out.returncode != 0:
         return ForgeResult(False, _failure("rad did not check out the patch", checked_out))
     try:

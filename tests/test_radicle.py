@@ -436,7 +436,9 @@ def test_patch_check_needs_a_sandbox_and_a_delegation(tmp_path: Path, monkeypatc
     recorded = log.read_text(encoding="utf-8")
     assert "--accept" in recorded
     assert "rad-passphrase-sekret" not in recorded
-    assert "patch checkout" in recorded
+    checkout_lines = [line for line in recorded.splitlines() if line.startswith("patch checkout")]
+    assert checkout_lines
+    assert all("--repo" not in line and "--force" in line for line in checkout_lines)
 
 
 def test_git_push_keeps_the_passphrase_out_of_argv(monkeypatch) -> None:
