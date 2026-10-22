@@ -660,6 +660,34 @@ def test_overshoot_stops_the_next_cycle(tmp_path: Path, monkeypatch) -> None:
     assert "250 / 100" in render_text(home)
 
 
+def test_fractional_report_is_metered_instead_of_the_smaller_estimate(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":15000.2,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["spending_limit_tokens"] = 10000
+    config["estimate_tokens_per_cycle"] = 100
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    first = tick(home)
+    assert first["plans"][0]["usage"] == "reported"
+    assert first["plans"][0]["metered_tokens"] == 15001
+    assert first["plans"][0]["estimated_tokens"] == 0
+    assert first["ledger"]["metered_tokens"] == 15001
+    assert first["ledger"]["estimated_tokens"] == 0
+    assert first["loop"]["status"] == "stopped"
+    second = tick(home)
+    assert len(second["plans"]) == 1
+    assert second["ledger"]["metered_tokens"] == 15001
+    assert "15001 / 10000" in render_text(home)
+    assert "local estimate, not billed usage" not in render_text(home)
+
+
 def test_mixed_metering_labels_estimate_and_reported(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     invoked = _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":15,"output_tokens":0}}')

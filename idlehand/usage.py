@@ -10,12 +10,17 @@ not a number; the caller keeps the local estimate.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
 PLAN_TIMEOUT = 20.0
+
+# Larger than any spending limit this node accepts. A non-finite report is
+# stored as this count so a smaller field cannot replace it.
+_HUGE_REPORT = 2**62
 
 _TOKEN_KEYS = (
     "input_tokens",
@@ -54,19 +59,44 @@ def claude_argv(binary: str, repo_url: str, action: str) -> list[str]:
     ]
 
 
+def _count_field(value: object) -> int | None:
+    """A non-negative token count, or None when this field is not one.
+
+    Fractional counts round up. A non-finite count is too large to drop.
+    Digits are a count. Booleans and negatives are not.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        if math.isnan(value):
+            return _HUGE_REPORT
+        if value < 0:
+            return None
+        if not math.isfinite(value) or value >= _HUGE_REPORT:
+            return _HUGE_REPORT
+        return math.ceil(value)
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        if len(value) > 18:
+            return _HUGE_REPORT
+        return int(value)
+    return None
+
+
 def _usage_total(usage: dict[str, object]) -> int | None:
     total = 0
     found = False
     for key in _TOKEN_KEYS:
-        value = usage.get(key)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        count = _count_field(usage.get(key))
+        if count is None:
             continue
         found = True
-        total += value
+        total += count
     if found:
         return total
-    fallback = usage.get("total_tokens")
-    if isinstance(fallback, bool) or not isinstance(fallback, int) or fallback < 0:
+    fallback = _count_field(usage.get("total_tokens"))
+    if fallback is None:
         return None
     return fallback
 
@@ -99,8 +129,11 @@ def _collect(node: object) -> tuple[list[int], list[int]]:
 def parse_reported_tokens(text: str) -> int | None:
     """Return reported tokens, or None when the CLI did not report usage.
 
-    Zero is a real report. The last result usage wins so a JSONL transcript
-    is not added up twice. A huge or deeply nested document is not a report.
+    Zero is a real report. A fractional count rounds up, and a non-finite
+    count is larger than the spending limit, so a smaller field or the local
+    estimate cannot replace it. The last result usage wins so a JSONL
+    transcript is not added up twice. A huge or deeply nested document is
+    not a report.
     """
     raw = text.strip()
     if not raw or len(raw) > 1_000_000:

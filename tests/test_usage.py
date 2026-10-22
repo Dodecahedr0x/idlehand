@@ -80,3 +80,14 @@ def test_huge_or_deep_usage_is_not_a_report() -> None:
 def test_total_tokens_is_only_a_fallback() -> None:
     assert parse_reported_tokens('{"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":99}}') == 4
     assert parse_reported_tokens('{"usage":{"total_tokens":9}}') == 9
+
+
+def test_fractional_and_non_finite_reports_are_not_rounded_down() -> None:
+    assert parse_reported_tokens('{"usage":{"input_tokens":100000.0,"output_tokens":1}}') == 100001
+    assert parse_reported_tokens('{"usage":{"input_tokens":2.2}}') == 3
+    assert parse_reported_tokens('{"usage":{"input_tokens":"4000","output_tokens":1}}') == 4001
+    huge = parse_reported_tokens('{"usage":{"input_tokens":1e309,"total_tokens":9}}')
+    assert huge is not None and huge > 10_000
+    assert parse_reported_tokens('{"usage":{"input_tokens":-1.5,"total_tokens":9}}') == 9
+    nan = parse_reported_tokens('{"usage":{"input_tokens":NaN,"output_tokens":1}}')
+    assert nan is not None and nan > 10_000
