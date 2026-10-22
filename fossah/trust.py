@@ -26,6 +26,8 @@ def trust_path(home: Path) -> Path:
 
 def public_subject(url: str) -> str:
     """A subject safe to store and show. Secrets and huge lines are not kept."""
+    if any(character in url for character in "\r\n\x00"):
+        return "list entry"
     text = scrub_secrets(url).replace("\n", " ").replace("\r", " ").strip()
     if not text or "PRIVATE KEY" in text or len(text) > 500 or "://" not in text:
         return "list entry"

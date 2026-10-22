@@ -135,8 +135,14 @@ def _with_url(problem: str, url: str) -> str:
     return f"{problem}: {shown}"
 
 
+def _control_characters(url: str) -> bool:
+    return any(character in url for character in "\r\n\x00")
+
+
 def _validate_repo_url(url: str) -> str:
     cleaned = url.strip()
+    if _control_characters(cleaned):
+        raise LinkError("repository URL must be http or https")
     if embeds_credentials(cleaned):
         raise LinkError("repository URLs cannot embed credentials")
     parsed = urllib.parse.urlparse(cleaned)
@@ -148,6 +154,8 @@ def _validate_repo_url(url: str) -> str:
 
 
 def _validate_list_url(url: str) -> None:
+    if _control_characters(url):
+        raise LinkError("a list file must be http, https, or file")
     if embeds_credentials(url):
         raise LinkError("list URLs cannot embed credentials")
     parsed = urllib.parse.urlparse(url)

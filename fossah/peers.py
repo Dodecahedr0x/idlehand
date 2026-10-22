@@ -31,6 +31,8 @@ class PeerCandidate:
 
 def normalize_peer_url(url: str) -> str:
     raw = url.strip()
+    if any(character in raw for character in "\r\n\x00"):
+        raise ValueError("peer URLs cannot contain a newline")
     parsed = urllib.parse.urlsplit(raw)
     if embeds_credentials(raw):
         raise ValueError("peer URLs cannot embed credentials")

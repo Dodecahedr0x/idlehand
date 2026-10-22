@@ -142,6 +142,23 @@ def test_review_explains_each_peer_and_does_not_import_repos() -> None:
     assert sum(item["reason"] == "the peer cap was reached" for item in kept_decisions) == 2
 
 
+def test_peer_url_with_a_newline_is_refused() -> None:
+    allowed, reason = explain_peer_url("https://peer.example/fossah/publish\nsekret", HEURISTIC)
+    assert allowed is False
+    assert "newline" in reason
+    assert "sekret" not in reason
+    chosen, decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents={"https://direct.example/p": {"peers": ["https://peer.example/p\nsekret"]}},
+        existing_urls=set(),
+        heuristic=HEURISTIC,
+    )
+    assert chosen == []
+    assert "sekret" not in json.dumps(decisions)
+
+
 def test_ipv6_loopback_keeps_its_brackets() -> None:
     assert normalize_peer_url("https://[::1]/fossah/publish") == "https://[::1]/fossah/publish"
     assert normalize_peer_url("https://[::1]:47321/fossah/publish/") == "https://[::1]:47321/fossah/publish"
