@@ -337,6 +337,20 @@ def test_repeatedly_encoded_token_in_a_list_file_is_not_stored(tmp_path: Path) -
     assert "credentials" in blob
 
 
+def test_credential_in_a_list_path_is_not_stored(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    ensure_home(home)
+    before = (home / "sources.toml").read_text(encoding="utf-8")
+    missing = tmp_path / "token=sekret"
+    with pytest.raises(LinkError, match="list URLs cannot embed credentials"):
+        apply_link(home, f"idlehand://add?list={missing.as_uri()}")
+    blob = (home / "trust.json").read_text(encoding="utf-8")
+    blob += (home / "sources.toml").read_text(encoding="utf-8")
+    assert "sekret" not in blob
+    assert "token=" not in blob
+    assert (home / "sources.toml").read_text(encoding="utf-8") == before
+
+
 def test_percent_encoded_newline_in_a_link_repo_is_not_stored(tmp_path: Path) -> None:
     from idlehand.analytics import render_text
 
