@@ -169,7 +169,7 @@ def review_second_degree(
                 peer_id = ""
             elif isinstance(entry, dict) and isinstance(entry.get("url"), str):
                 raw = entry["url"]
-                peer_id = str(entry.get("id", ""))
+                peer_id = public_label(entry.get("id", ""))
             else:
                 continue
             allowed, reason = explain_peer_url(raw, heuristic)
@@ -260,7 +260,7 @@ def load_peer_document(url: str, timeout: float = 5) -> dict[str, Any]:
     return payload
 
 
-def _public_label(value: object) -> str:
+def public_label(value: object) -> str:
     """A short label safe to publish. Credential text is dropped."""
     if not isinstance(value, str) or contains_control_break(value):
         return ""
@@ -280,10 +280,10 @@ def publish_document(
     """Public document. No subscription, spending, or home path."""
     return {
         "idlehand": 1,
-        "node_id": _public_label(node_id),
+        "node_id": public_label(node_id),
         "listen_url": public_url(listen_url) if isinstance(listen_url, str) else "",
         "peers": [
-            {"url": shown, "id": _public_label(peer.get("id", ""))}
+            {"url": shown, "id": public_label(peer.get("id", ""))}
             for peer in peers
             if (shown := public_url(str(peer["url"])))
         ],

@@ -33,6 +33,7 @@ from idlehand.peers import (
     load_peer_document,
     normalize_peer_url,
     normalize_safe,
+    public_label,
     publish_document,
     review_second_degree,
 )
@@ -316,8 +317,9 @@ def _fetch_peers(
         documents[key] = document
         ignored += count_remote_repos(document)
         node_id = document.get("node_id")
-        if isinstance(node_id, str) and node_id:
-            id_updates[key] = node_id
+        label = public_label(node_id)
+        if label:
+            id_updates[key] = label
     existing = []
     for peer in peers:
         try:

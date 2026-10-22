@@ -293,6 +293,27 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     assert "https://github.com/someone/not-imported" not in (home / "trust.json").read_text(encoding="utf-8")
 
 
+def test_remote_peer_id_with_a_credential_is_not_stored(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _ready(home)
+    document = {
+        "idlehand": 1,
+        "node_id": "password=sekret",
+        "peers": [{"url": "https://second.example/idlehand/publish", "id": "token=sekret"}],
+        "repos": [],
+    }
+    peer_file = tmp_path / "peer.json"
+    peer_file.write_text(json.dumps(document), encoding="utf-8")
+    save_peers(home, [{"url": peer_file.as_uri(), "id": "", "source": "user", "endorsements": 1}])
+    tick(home)
+    blob = (home / "peers.toml").read_text(encoding="utf-8")
+    blob += (home / "publish.json").read_text(encoding="utf-8")
+    assert "https://second.example/idlehand/publish" in blob
+    assert "sekret" not in blob
+    assert "token=" not in blob
+    assert "password=" not in blob
+
+
 def test_non_utf8_peer_document_does_not_crash_or_leak(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _ready(home)
