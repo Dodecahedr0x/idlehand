@@ -38,7 +38,14 @@ for path in root.rglob("*"):
     if path.stat().st_size > 1_000_000:
         continue
     text = path.read_text(encoding="utf-8", errors="ignore")
-    if "BEGIN PRIVATE KEY" in text or "BEGIN RSA PRIVATE KEY" in text:
+    markers = (
+        "BEGIN PRIVATE KEY",
+        "BEGIN RSA PRIVATE KEY",
+        "BEGIN OPENSSH PRIVATE KEY",
+        "BEGIN EC PRIVATE KEY",
+        "BEGIN DSA PRIVATE KEY",
+    )
+    if any(marker in text for marker in markers):
         findings.append(f"private key material in {path.relative_to(root)}")
 out = root / ".fossah"
 out.mkdir(exist_ok=True)
@@ -64,7 +71,14 @@ for path in root.rglob("*"):
     if path.stat().st_size > 1_000_000:
         continue
     text = path.read_text(encoding="utf-8", errors="ignore")
-    if "BEGIN PRIVATE KEY" in text or "BEGIN RSA PRIVATE KEY" in text:
+    markers = (
+        "BEGIN PRIVATE KEY",
+        "BEGIN RSA PRIVATE KEY",
+        "BEGIN OPENSSH PRIVATE KEY",
+        "BEGIN EC PRIVATE KEY",
+        "BEGIN DSA PRIVATE KEY",
+    )
+    if any(marker in text for marker in markers):
         findings.append(f"private key material in {path.relative_to(root)}")
 out = root / ".fossah"
 out.mkdir(exist_ok=True)

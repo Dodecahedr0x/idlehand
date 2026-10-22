@@ -27,6 +27,28 @@ def test_inline_link_adds_repos_locally(tmp_path: Path) -> None:
     assert again == []
 
 
+@pytest.mark.parametrize(
+    ("url", "match"),
+    [
+        ("fossah://remove?repo=https://github.com/a/b", "unsupported"),
+        ("fossah://add?list=https://a.example/one&list=https://a.example/two", "only one list"),
+        ("fossah://add?repo=https://example.com", "needs a path"),
+        ("https://github.com/a/b", "not a Fossah link"),
+    ],
+)
+def test_structural_link_refusals_are_recorded(tmp_path: Path, url: str, match: str) -> None:
+    from fossah.trust import load_trust
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    before = [repo["url"] for repo in load_sources(home)]
+    with pytest.raises(LinkError, match=match):
+        apply_link(home, url)
+    assert [repo["url"] for repo in load_sources(home)] == before
+    assert any(match in item["reason"] and item["accepted"] is False for item in load_trust(home))
+    assert "secret" not in (home / "trust.json").read_text(encoding="utf-8")
+
+
 def test_catalog_parameter_is_rejected() -> None:
     with pytest.raises(LinkError, match="catalog"):
         parse_fossah_link("fossah://add?catalog=https://fossah.example/directory&repo=https://github.com/a/b")

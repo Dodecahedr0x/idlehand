@@ -27,7 +27,7 @@ BROKEN_FILES = {
 
 KEY_FILES = {
     "readme.txt": "hello\n",
-    "secret.pem": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+    "secret.pem": "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
 }
 
 
