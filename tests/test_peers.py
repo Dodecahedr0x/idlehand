@@ -204,6 +204,24 @@ def test_peer_url_with_a_newline_is_refused() -> None:
     assert "sekret" not in json.dumps(decisions)
 
 
+def test_assigned_credential_in_a_peer_file_url_is_refused(tmp_path) -> None:
+    url = (tmp_path / "token=sekret").as_uri()
+    allowed, reason = explain_peer_url(url, HEURISTIC)
+    assert allowed is False
+    assert reason == "peer URLs cannot embed credentials"
+    assert "sekret" not in reason
+    chosen, decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents={"https://direct.example/p": {"peers": [url]}},
+        existing_urls=set(),
+        heuristic=HEURISTIC,
+    )
+    assert chosen == []
+    assert "sekret" not in json.dumps(decisions)
+
+
 def test_percent_encoded_newline_in_a_peer_url_is_refused() -> None:
     url = "https://peer.example/idlehand/publish%0A--upload-pack=touch"
     allowed, reason = explain_peer_url(url, HEURISTIC)
