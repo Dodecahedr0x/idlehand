@@ -307,6 +307,41 @@ def test_publish_document_redacts_embedded_credentials() -> None:
     assert document["peers"] == [{"url": "https://peer.example/fossah/publish", "id": "p"}]
 
 
+def test_publish_endpoint_does_not_follow_a_symlink(tmp_path: Path) -> None:
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from fossah.publish import PublishHandler
+
+    home = tmp_path / "home"
+    home.mkdir()
+    secret = tmp_path / "secret.json"
+    secret.write_text('{"token":"sekret"}\n', encoding="utf-8")
+    link = home / "publish.json"
+    link.symlink_to(secret)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PublishHandler)
+    server.publish_file = str(link)  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/fossah/publish", timeout=2)
+            code = 200
+            body = ""
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+            body = exc.read().decode("utf-8", errors="ignore")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert code == 404
+    assert "sekret" not in body
+    assert secret.read_text(encoding="utf-8").startswith("{")
+
+
 def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
     import json
     import threading

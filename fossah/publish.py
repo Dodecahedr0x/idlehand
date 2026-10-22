@@ -18,7 +18,7 @@ class PublishHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         path = Path(self.server.publish_file)  # type: ignore[attr-defined]
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             self.send_error(404)
             return
         body = path.read_bytes()
