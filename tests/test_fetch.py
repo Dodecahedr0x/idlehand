@@ -38,6 +38,7 @@ def test_redact_clone_url_strips_userinfo_and_token_query() -> None:
     from fossah.fetch import redact_clone_url
 
     assert redact_clone_url("https://user:secret@github.com/org/repo.git") == "https://github.com/org/repo.git"
+    assert redact_clone_url("https://user:secret@[::1]:443/fossah/publish") == "https://[::1]:443/fossah/publish"
     assert "sekret" not in redact_clone_url("https://github.com/org/repo.git?access_token=sekret")
     assert redact_clone_url("file:///tmp/repo") == "file:///tmp/repo"
     assert redact_clone_url("https://github.com/org/repo.git") == "https://github.com/org/repo.git"

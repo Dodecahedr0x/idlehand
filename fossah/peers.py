@@ -40,9 +40,9 @@ def normalize_peer_url(url: str) -> str:
     host = (parsed.hostname or "").lower()
     if scheme in {"https", "http"} and not host:
         raise ValueError("peer URL needs a host")
-    netloc = host
+    netloc = f"[{host}]" if ":" in host else host
     if parsed.port:
-        netloc = f"{host}:{parsed.port}"
+        netloc = f"{netloc}:{parsed.port}"
     path = parsed.path or ""
     if scheme != "file" and path != "/" and path.endswith("/"):
         path = path[:-1]

@@ -52,6 +52,8 @@ def redact_clone_url(url: str) -> str:
     """Drop userinfo and credential query keys before a URL is written down."""
     parsed = urllib.parse.urlsplit(url.strip())
     host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
     if parsed.port:
         host = f"{host}:{parsed.port}"
     if parsed.username or parsed.password:

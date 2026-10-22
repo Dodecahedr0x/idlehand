@@ -142,6 +142,25 @@ def test_review_explains_each_peer_and_does_not_import_repos() -> None:
     assert sum(item["reason"] == "the peer cap was reached" for item in kept_decisions) == 2
 
 
+def test_ipv6_loopback_keeps_its_brackets() -> None:
+    assert normalize_peer_url("https://[::1]/fossah/publish") == "https://[::1]/fossah/publish"
+    assert normalize_peer_url("https://[::1]:47321/fossah/publish/") == "https://[::1]:47321/fossah/publish"
+    allowed, reason = explain_peer_url("http://[::1]:9/fossah/publish", HEURISTIC)
+    assert allowed is True
+    assert reason == "http is allowed for loopback"
+    chosen, decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents={"https://direct.example/p": {"peers": ["http://[::1]:9/fossah/publish"]}},
+        existing_urls=set(),
+        heuristic=HEURISTIC,
+    )
+    assert [item.url for item in chosen] == ["http://[::1]:9/fossah/publish"]
+    assert decisions[-1]["accepted"] is True
+    assert decisions[-1]["subject"] == "http://[::1]:9/fossah/publish"
+
+
 def test_unsupported_peer_scheme_is_refused() -> None:
     allowed, reason = explain_peer_url("ftp://files.example/fossah/publish", HEURISTIC)
     assert allowed is False
