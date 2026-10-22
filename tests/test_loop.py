@@ -956,6 +956,42 @@ def test_link_cycle_reports_trust_and_usage_together(tmp_path: Path, monkeypatch
     assert "nothing was contributed" not in text
 
 
+def test_repo_test_output_does_not_keep_a_credential_or_a_private_key(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(
+        home,
+        tmp_path,
+        {
+            "test_print.py": (
+                "import unittest\n"
+                "class Leak(unittest.TestCase):\n"
+                "    def test_print(self):\n"
+                "        print('https://user:sekret@github.com/org/repo.git')\n"
+                "        print('-----BEGIN OPENSSH PRIVATE KEY-----')\n"
+            ),
+        },
+    )
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is True
+    assert plan["sandbox"]["ok"] is True
+    blob = (home / "state.json").read_text(encoding="utf-8")
+    log = (home / "node.log").read_text(encoding="utf-8") if (home / "node.log").exists() else ""
+    assert "sekret" not in blob
+    assert "sekret" not in log
+    assert "BEGIN OPENSSH PRIVATE KEY" not in blob
+    assert "private key material omitted" in plan["sandbox"]["stdout"]
+
+
 def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)

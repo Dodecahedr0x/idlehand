@@ -13,6 +13,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from fossah.fetch import scrub_secrets
+
+
+def _stored_output(text: str, limit: int) -> str:
+    """Drop credential URLs and private-key lines before output is written down."""
+    lines = []
+    for line in scrub_secrets(text).splitlines():
+        if "PRIVATE KEY" in line:
+            lines.append("private key material omitted")
+        else:
+            lines.append(line)
+    return "\n".join(lines)[-limit:]
+
 
 class SandboxError(RuntimeError):
     pass
@@ -35,9 +48,9 @@ class SandboxResult:
             "invoked": self.invoked,
             "ok": self.ok,
             "exit_code": self.exit_code,
-            "stdout": self.stdout[-500:],
-            "stderr": self.stderr[-500:],
-            "reason": self.reason,
+            "stdout": _stored_output(self.stdout, 500),
+            "stderr": _stored_output(self.stderr, 500),
+            "reason": _stored_output(self.reason, 300),
             "argv": self.argv,
         }
 
