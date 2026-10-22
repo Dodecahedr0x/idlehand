@@ -990,6 +990,7 @@ def test_repo_test_output_does_not_keep_a_credential_or_a_private_key(tmp_path: 
     assert "sekret" not in log
     assert "BEGIN OPENSSH PRIVATE KEY" not in blob
     assert "private key material omitted" in plan["sandbox"]["stdout"]
+    assert "fossah-action=test" in plan["sandbox"]["stdout"]
 
 
 def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monkeypatch) -> None:
@@ -1115,6 +1116,26 @@ def test_unreadable_ledger_stops_before_a_cycle_and_analytics_keeps_trust(tmp_pa
     assert listed["loop"]["reason"] == "spending ledger is unreadable"
     assert listed["ledger"]["estimated_tokens"] >= 100
     assert not invoked.exists()
+
+
+def test_kept_drafts_drop_credential_urls_and_private_key_lines(tmp_path: Path) -> None:
+    from fossah.loop import _keep_drafts
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "work"
+    (workspace / ".fossah").mkdir(parents=True)
+    (workspace / ".fossah" / "audit.txt").write_text(
+        "https://user:sekret@github.com/org/repo.git\n-----BEGIN OPENSSH PRIVATE KEY-----\nfiles=1\n",
+        encoding="utf-8",
+    )
+    _keep_drafts(home, workspace, "https://github.com/org/repo")
+    kept = list((home / "drafts").rglob("audit.txt"))
+    assert len(kept) == 1
+    text = kept[0].read_text(encoding="utf-8")
+    assert "sekret" not in text
+    assert "BEGIN OPENSSH PRIVATE KEY" not in text
+    assert "private key material omitted" in text
+    assert "files=1" in text
 
 
 def test_kept_drafts_do_not_write_through_a_directory_symlink(tmp_path: Path) -> None:

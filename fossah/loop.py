@@ -205,10 +205,16 @@ def _keep_drafts(home: Path, workspace: Path, repo_url: str) -> None:
                 continue
             if source.stat().st_size > 1_000_000:
                 continue
-            payload = source.read_bytes()
-            temporary.write_bytes(payload)
+            text = source.read_text(encoding="utf-8")
+            lines = []
+            for line in scrub_secrets(text).splitlines():
+                if "PRIVATE KEY" in line:
+                    lines.append("private key material omitted")
+                else:
+                    lines.append(line)
+            temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
             temporary.replace(target)
-        except OSError:
+        except (OSError, UnicodeError):
             continue
 
 

@@ -23,6 +23,14 @@ def test_classify_refuses_ssh_and_embedded_credentials() -> None:
         assert snippet in reason
 
 
+def test_scrub_secrets_keeps_the_following_line() -> None:
+    from fossah.fetch import scrub_secrets
+
+    text = scrub_secrets("https://user:sekret@github.com/org/repo.git\nfiles=1\n")
+    assert text == "https://github.com/org/repo.git\nfiles=1"
+    assert "sekret" not in text
+
+
 def test_fragment_credentials_are_refused_and_redacted() -> None:
     refused = classify_clone_url("https://github.com/org/repo.git#access_token=sekret")
     assert refused == (None, "repository URL embeds credentials")

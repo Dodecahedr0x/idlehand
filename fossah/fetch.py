@@ -73,11 +73,15 @@ _NESTED_CREDENTIAL = re.compile(
 )
 
 
-def scrub_secrets(text: str) -> str:
-    """Drop userinfo and credential query keys, including inside a wrapped URL."""
-    cleaned = _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(text)))
+def _scrub_line(line: str) -> str:
+    cleaned = _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(line)))
     cleaned = re.sub(r"\?&+", "?", cleaned)
     return re.sub(r"[?&]+$", "", cleaned)
+
+
+def scrub_secrets(text: str) -> str:
+    """Drop userinfo and credential query keys, one line at a time."""
+    return "\n".join(_scrub_line(line) for line in text.splitlines())
 
 
 def classify_clone_url(url: str) -> tuple[str | None, str]:
