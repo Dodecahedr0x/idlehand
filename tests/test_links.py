@@ -224,6 +224,22 @@ def test_redirected_list_is_refused(tmp_path: Path) -> None:
     assert any("redirect" in item["reason"] and item["accepted"] is False for item in load_trust(home))
 
 
+def test_non_utf8_list_is_refused_without_storing_the_bytes(tmp_path: Path) -> None:
+    from fossah.trust import load_trust
+
+    listing = tmp_path / "repos.txt"
+    listing.write_bytes(b"\xff\xfesekret-bytes")
+    home = tmp_path / "home"
+    ensure_home(home)
+    before = [repo["url"] for repo in load_sources(home)]
+    with pytest.raises(LinkError, match="UTF-8"):
+        apply_link(home, f"fossah://add?list={listing.as_uri()}")
+    assert [repo["url"] for repo in load_sources(home)] == before
+    blob = (home / "trust.json").read_text(encoding="utf-8")
+    assert "sekret-bytes" not in blob
+    assert any(item["reason"] == "document is not UTF-8" and item["accepted"] is False for item in load_trust(home))
+
+
 def test_file_list_and_json(tmp_path: Path) -> None:
     listing = tmp_path / "repos.json"
     listing.write_text(json.dumps({"repos": [{"url": "https://github.com/encode/httpx"}]}), encoding="utf-8")

@@ -270,6 +270,19 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     assert "https://github.com/someone/not-imported" not in (home / "trust.json").read_text(encoding="utf-8")
 
 
+def test_non_utf8_peer_document_does_not_crash_or_leak(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _ready(home)
+    peer = tmp_path / "peer.json"
+    peer.write_bytes(b"\xffsekret")
+    save_peers(home, [{"url": peer.as_uri(), "id": "", "source": "user", "endorsements": 1}])
+    state = tick(home)
+    recorded = json.dumps(state)
+    assert "sekret" not in recorded
+    assert "UTF-8" in state["peers_runtime"]["last_error"]
+    assert state["plans"] == []
+
+
 def test_credential_peer_url_is_not_fetched_or_published(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _ready(home)

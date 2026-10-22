@@ -172,7 +172,7 @@ def fetch_text(url: str, timeout: float = 10) -> str:
         data = path.read_bytes()
         if len(data) > MAX_LIST_BYTES:
             raise LinkError("list file is larger than 1MB")
-        return data.decode("utf-8")
+        return _decode_text(data)
     if parsed.scheme not in {"https", "http"}:
         raise LinkError(f"cannot fetch {parsed.scheme} URLs")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -184,7 +184,14 @@ def fetch_text(url: str, timeout: float = 10) -> str:
         raise LinkError(f"could not fetch {redact_clone_url(url)}: {exc.reason}") from exc
     if len(data) > MAX_LIST_BYTES:
         raise LinkError("list file is larger than 1MB")
-    return data.decode("utf-8")
+    return _decode_text(data)
+
+
+def _decode_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LinkError("document is not UTF-8") from exc
 
 
 def repos_from_list_text(text: str) -> list[str]:
