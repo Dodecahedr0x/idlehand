@@ -24,7 +24,7 @@ from fossah.config import (
     save_peers,
     state_path,
 )
-from fossah.fetch import clone_repository, redact_clone_url
+from fossah.fetch import clone_repository, embeds_credentials, redact_clone_url
 from fossah.home import home_lock, read_json, write_json
 from fossah.peers import (
     PeerCandidate,
@@ -82,25 +82,55 @@ def fresh_state(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _ledger_count(value: object) -> int | None:
+    """A stored token count. None means the ledger cannot be trusted."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
-    raw = read_json(state_path(home))
+    broken = False
+    try:
+        raw = read_json(state_path(home))
+    except (OSError, UnicodeError, ValueError):
+        raw = None
+        broken = True
     state = fresh_state(config)
+    limit = max(int(config["spending_limit_tokens"]), 0)
+    if broken or (raw is not None and not isinstance(raw, dict)):
+        state["ledger"]["estimated_tokens"] = limit
+        state["loop"]["status"] = "stopped"
+        state["loop"]["reason"] = "spending ledger is unreadable"
+        return state
     if not isinstance(raw, dict):
         return state
     if isinstance(raw.get("plans"), list):
         state["plans"] = raw["plans"]
     ledger = raw.get("ledger")
     if isinstance(ledger, dict):
-        state["ledger"]["estimated_tokens"] = int(ledger.get("estimated_tokens", 0) or 0)
-        state["ledger"]["metered_tokens"] = int(ledger.get("metered_tokens", 0) or 0)
+        estimated = _ledger_count(ledger.get("estimated_tokens", 0))
+        metered = _ledger_count(ledger.get("metered_tokens", 0))
+        if estimated is None or metered is None:
+            state["ledger"]["estimated_tokens"] = limit
+            state["ledger"]["metered_tokens"] = metered if metered is not None else 0
+            state["loop"]["status"] = "stopped"
+            state["loop"]["reason"] = "spending ledger is unreadable"
+        else:
+            state["ledger"]["estimated_tokens"] = estimated
+            state["ledger"]["metered_tokens"] = metered
         metering = ledger.get("metering")
         if metering in {"local-estimate", "reported", "mixed"}:
             state["ledger"]["metering"] = metering
     loop = raw.get("loop")
     if isinstance(loop, dict):
-        state["loop"]["cycles"] = int(loop.get("cycles", 0) or 0)
-        state["loop"]["status"] = loop.get("status") or "idle"
-        state["loop"]["reason"] = loop.get("reason") or ""
+        cycles = loop.get("cycles", 0)
+        if isinstance(cycles, bool) or not isinstance(cycles, int) or cycles < 0:
+            cycles = 0
+        state["loop"]["cycles"] = cycles
+        if state["loop"]["reason"] != "spending ledger is unreadable":
+            state["loop"]["status"] = loop.get("status") or "idle"
+            state["loop"]["reason"] = loop.get("reason") or ""
     node = raw.get("node")
     if isinstance(node, dict) and node.get("started_at"):
         state["node"]["started_at"] = node["started_at"]
@@ -128,6 +158,24 @@ def _workspace(home: Path, repo_url: str) -> Path:
     return home / "workspaces" / slug
 
 
+def _draft_dir(home: Path, repo_url: str) -> Path | None:
+    """Directory under the Fossah home for drafts. Symlinks are not followed."""
+    root = home.resolve()
+    drafts = home / "drafts"
+    if drafts.is_symlink():
+        return None
+    destination = drafts / hashlib.sha256(repo_url.encode()).hexdigest()[:16]
+    if destination.is_symlink():
+        return None
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        if not destination.resolve().is_relative_to(root):
+            return None
+    except OSError:
+        return None
+    return destination
+
+
 def _keep_drafts(home: Path, workspace: Path, repo_url: str) -> None:
     """Copy sandbox drafts out of the clone before the next cycle replaces it."""
     produced = workspace / ".fossah"
@@ -138,11 +186,14 @@ def _keep_drafts(home: Path, workspace: Path, repo_url: str) -> None:
             return
     except OSError:
         return
-    destination = home / "drafts" / hashlib.sha256(repo_url.encode()).hexdigest()[:16]
-    destination.mkdir(parents=True, exist_ok=True)
+    destination = _draft_dir(home, repo_url)
+    if destination is None:
+        return
     for name in ("audit.txt", "issue-draft.md", "pr-draft.md"):
         source = produced / name
-        if not source.is_file() or source.is_symlink():
+        target = destination / name
+        temporary = destination / f".{name}.tmp"
+        if not source.is_file() or source.is_symlink() or target.is_symlink() or temporary.is_symlink():
             continue
         try:
             if not source.resolve().is_relative_to(workspace.resolve()):
@@ -150,9 +201,10 @@ def _keep_drafts(home: Path, workspace: Path, repo_url: str) -> None:
             if source.stat().st_size > 1_000_000:
                 continue
             payload = source.read_bytes()
+            temporary.write_bytes(payload)
+            temporary.replace(target)
         except OSError:
             continue
-        (destination / name).write_bytes(payload)
 
 
 def _write_publish(home: Path, config: dict[str, Any], peers: list[dict[str, Any]], repos: list[dict[str, str]], listen_url: str) -> None:
@@ -191,6 +243,9 @@ def _fetch_peers(
     id_updates: dict[str, str] = {}
     for peer in peers:
         url = str(peer.get("url", ""))
+        if embeds_credentials(url):
+            errors.append("peer URLs cannot embed credentials")
+            continue
         try:
             document = load_peer_document(url)
             key = normalize_peer_url(url)
@@ -235,6 +290,9 @@ def _prepare_cycle(
     limit = int(config["spending_limit_tokens"])
     cost = int(config["estimate_tokens_per_cycle"])
     state["ledger"]["limit_tokens"] = limit
+    if state["loop"].get("reason") == "spending ledger is unreadable":
+        state["loop"]["status"] = "stopped"
+        return None
     if spent >= limit or spent + cost > limit:
         state["loop"]["status"] = "stopped"
         state["loop"]["reason"] = "spending limit reached"

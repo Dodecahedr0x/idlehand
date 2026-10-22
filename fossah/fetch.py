@@ -26,6 +26,18 @@ class FetchResult:
         return {"cloned": self.cloned, "reason": self.reason}
 
 
+CREDENTIAL_QUERY_KEYS = frozenset({"token", "password", "access_token", "auth"})
+
+
+def embeds_credentials(url: str) -> bool:
+    """True when a URL carries userinfo or a credential query key."""
+    parsed = urllib.parse.urlsplit(url.strip())
+    if parsed.username or parsed.password:
+        return True
+    keys = {key.lower() for key, _value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)}
+    return bool(keys & CREDENTIAL_QUERY_KEYS)
+
+
 def redact_clone_url(url: str) -> str:
     """Drop userinfo and credential query keys before a URL is written down."""
     parsed = urllib.parse.urlsplit(url.strip())
@@ -35,7 +47,7 @@ def redact_clone_url(url: str) -> str:
     if parsed.username or parsed.password:
         parsed = parsed._replace(netloc=host)
     query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    kept = [(key, value) for key, value in query if key.lower() not in {"token", "password", "access_token", "auth"}]
+    kept = [(key, value) for key, value in query if key.lower() not in CREDENTIAL_QUERY_KEYS]
     if len(kept) != len(query):
         parsed = parsed._replace(query=urllib.parse.urlencode(kept))
     return urllib.parse.urlunsplit(parsed)
@@ -49,10 +61,7 @@ def classify_clone_url(url: str) -> tuple[str | None, str]:
     if raw.startswith("git@") or raw.startswith("ssh://"):
         return None, "public clones do not use SSH keys"
     parsed = urllib.parse.urlparse(raw)
-    if parsed.username or parsed.password:
-        return None, "repository URL embeds credentials"
-    query = {key.lower() for key in urllib.parse.parse_qs(parsed.query)}
-    if query & {"token", "password", "access_token", "auth"}:
+    if embeds_credentials(raw):
         return None, "repository URL embeds credentials"
     scheme = parsed.scheme.lower()
     if scheme in {"ssh", "git"}:

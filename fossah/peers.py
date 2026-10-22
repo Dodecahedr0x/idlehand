@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fossah.config import load_peers, save_peers
+from fossah.fetch import embeds_credentials, redact_clone_url
 from fossah.home import home_lock
 from fossah.links import LinkError, fetch_text
 from fossah.trust import decision, public_subject
@@ -31,7 +32,7 @@ class PeerCandidate:
 def normalize_peer_url(url: str) -> str:
     raw = url.strip()
     parsed = urllib.parse.urlsplit(raw)
-    if parsed.username or parsed.password:
+    if embeds_credentials(raw):
         raise ValueError("peer URLs cannot embed credentials")
     scheme = parsed.scheme.lower()
     if scheme not in {"https", "http", "file"}:
@@ -243,8 +244,8 @@ def publish_document(
         "fossah": 1,
         "node_id": node_id,
         "listen_url": listen_url,
-        "peers": [{"url": peer["url"], "id": peer.get("id", "")} for peer in peers],
-        "repos": [{"url": repo["url"]} for repo in repos],
+        "peers": [{"url": redact_clone_url(str(peer["url"])), "id": peer.get("id", "")} for peer in peers],
+        "repos": [{"url": redact_clone_url(str(repo["url"]))} for repo in repos],
     }
 
 

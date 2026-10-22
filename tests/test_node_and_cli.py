@@ -112,6 +112,7 @@ def test_node_stays_up_when_the_clone_is_refused(tmp_path: Path, monkeypatch) ->
         assert not invoked.exists()
         blob = json.dumps(state)
         assert "secret" not in blob
+        assert "secret" not in (home / "publish.json").read_text(encoding="utf-8")
         assert "nothing was contributed" in render_text(home)
     finally:
         stop_node(home)

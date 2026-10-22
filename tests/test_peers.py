@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from fossah.peers import explain_peer_url, normalize_peer_url, peer_url_allowed, review_second_degree, select_second_degree
 
 HEURISTIC = {
@@ -144,6 +146,37 @@ def test_unsupported_peer_scheme_is_refused() -> None:
     allowed, reason = explain_peer_url("ftp://files.example/fossah/publish", HEURISTIC)
     assert allowed is False
     assert "ftp" in reason
+
+
+def test_token_query_on_a_peer_url_is_refused(tmp_path) -> None:
+    from fossah.config import ensure_home
+    from fossah.peers import user_add_peer
+
+    chosen, decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents={
+            "https://direct.example/p": {
+                "peers": [{"url": "https://second.example/p?token=sekret"}],
+                "repos": [{"url": "https://github.com/someone/not-imported"}],
+            }
+        },
+        existing_urls=set(),
+        heuristic=HEURISTIC,
+    )
+    assert chosen == []
+    blob = json.dumps(decisions)
+    assert "sekret" not in blob
+    assert "token=" not in blob
+    assert any("credentials" in item["reason"] and item["accepted"] is False for item in decisions)
+    assert all("github.com" not in item["subject"] for item in decisions)
+    home = tmp_path / "home"
+    ensure_home(home)
+    with pytest.raises(ValueError, match="credentials"):
+        user_add_peer(home, "https://peer.example/fossah/publish?access_token=sekret")
+    assert "sekret" not in (home / "peers.toml").read_text(encoding="utf-8")
+    assert not (home / "trust.json").exists()
 
 
 def test_user_added_peer_skips_the_second_degree_check(tmp_path) -> None:

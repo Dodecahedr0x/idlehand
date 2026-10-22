@@ -15,6 +15,7 @@ from pathlib import Path
 
 from fossah import __version__
 from fossah.config import load_sources, save_sources
+from fossah.fetch import embeds_credentials, redact_clone_url
 from fossah.home import home_lock
 from fossah.trust import decision, remember
 
@@ -113,25 +114,47 @@ def judge_list_text(text: str) -> list[tuple[bool, str, str]]:
     return judged
 
 
+def _shown_url(url: str) -> str:
+    """A URL that may appear in a refusal. Omit lines that are not a URL."""
+    shown = redact_clone_url(url.strip())
+    if (
+        not shown
+        or "PRIVATE KEY" in shown
+        or any(character in shown for character in "\r\n\t ")
+        or len(shown) > 200
+        or "://" not in shown
+    ):
+        return ""
+    return shown
+
+
+def _with_url(problem: str, url: str) -> str:
+    shown = _shown_url(url)
+    if not shown:
+        return problem
+    return f"{problem}: {shown}"
+
+
 def _validate_repo_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url.strip())
-    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-        raise LinkError(f"repository URL must be http or https: {url}")
-    if parsed.username or parsed.password:
+    cleaned = url.strip()
+    if embeds_credentials(cleaned):
         raise LinkError("repository URLs cannot embed credentials")
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        raise LinkError(_with_url("repository URL must be http or https", cleaned))
     if parsed.path in {"", "/"}:
-        raise LinkError(f"repository URL needs a path: {url}")
-    return url.strip()
+        raise LinkError(_with_url("repository URL needs a path", cleaned))
+    return cleaned
 
 
 def _validate_list_url(url: str) -> None:
+    if embeds_credentials(url):
+        raise LinkError("list URLs cannot embed credentials")
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"https", "http", "file"}:
         raise LinkError("a list file must be http, https, or file")
     if parsed.scheme in {"https", "http"} and not parsed.netloc:
         raise LinkError("the list URL needs a host")
-    if parsed.username or parsed.password:
-        raise LinkError("list URLs cannot embed credentials")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -158,7 +181,7 @@ def fetch_text(url: str, timeout: float = 10) -> str:
         with opener.open(request, timeout=timeout) as response:
             data = response.read(MAX_LIST_BYTES + 1)
     except urllib.error.URLError as exc:
-        raise LinkError(f"could not fetch {url}: {exc.reason}") from exc
+        raise LinkError(f"could not fetch {redact_clone_url(url)}: {exc.reason}") from exc
     if len(data) > MAX_LIST_BYTES:
         raise LinkError("list file is larger than 1MB")
     return data.decode("utf-8")

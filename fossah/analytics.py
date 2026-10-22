@@ -13,9 +13,20 @@ from fossah.process import alive_pid
 from fossah.trust import load_trust
 
 
+def _whole(value: object) -> tuple[int, bool]:
+    if value is None or value == "":
+        return 0, True
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0, False
+    return value, True
+
+
 def snapshot(home: Path) -> dict[str, Any]:
     config = load_config(home) if (home / "config.toml").exists() else {}
-    state = read_json(state_path(home))
+    try:
+        state = read_json(state_path(home))
+    except (OSError, UnicodeError, ValueError):
+        state = {}
     if not isinstance(state, dict):
         state = {}
     pid = alive_pid(home)
@@ -64,18 +75,20 @@ def render_text(home: Path) -> str:
         sub_line = f"{subscription.get('name')} connected ({subscription.get('binary')})"
     else:
         sub_line = subscription.get("detail") or "subscription is not connected"
-    estimated = int(ledger.get("estimated_tokens", 0) or 0)
-    metered = int(ledger.get("metered_tokens", 0) or 0)
+    estimated, estimated_ok = _whole(ledger.get("estimated_tokens", 0))
+    metered, metered_ok = _whole(ledger.get("metered_tokens", 0))
     spent = estimated + metered
     limit = ledger.get("limit_tokens", snap["spending_limit_tokens"])
     metering = ledger.get("metering") or "local-estimate"
-    if metering == "reported":
+    if not estimated_ok or not metered_ok:
+        spending_detail = "spending ledger is unreadable"
+    elif metering == "reported":
         spending_detail = "reported by the subscription"
     elif metering == "mixed":
         spending_detail = f"{estimated} estimated, {metered} reported"
     else:
         spending_detail = "local estimate, not billed usage"
-    pushed = int(state.get("contributions_pushed", 0) or 0) if isinstance(state, dict) else 0
+    pushed, _pushed_ok = _whole(state.get("contributions_pushed", 0) if isinstance(state, dict) else 0)
     recorded = sum(1 for plan in plans if isinstance(plan, dict) and plan.get("contributed"))
     direct = snap["peers"]
     learned = [peer for peer in direct if peer.get("source") == "peers-of-peers"]

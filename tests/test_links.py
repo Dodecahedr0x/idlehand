@@ -231,3 +231,39 @@ def test_file_list_and_json(tmp_path: Path) -> None:
     ensure_home(home)
     added = apply_link(home, f"fossah://add?list={listing.as_uri()}")
     assert added == ["https://github.com/encode/httpx"]
+
+
+def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> None:
+    from fossah.trust import load_trust
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    added = apply_link(
+        home,
+        "fossah://add?repo=https://github.com/org/repo?access_token=sekret&repo=https://github.com/pallets/click",
+    )
+    assert added == ["https://github.com/pallets/click"]
+    stored = (home / "sources.toml").read_text(encoding="utf-8") + (home / "trust.json").read_text(encoding="utf-8")
+    assert "sekret" not in stored
+    assert "access_token" not in stored
+    refused = [item for item in load_trust(home) if not item["accepted"]]
+    assert any("credentials" in item["reason"] for item in refused)
+    before = [repo["url"] for repo in load_sources(home)]
+    with pytest.raises(LinkError, match="credentials"):
+        apply_link(home, "fossah://add?repo=https://example.com?token=sekret")
+    with pytest.raises(LinkError, match="credentials"):
+        apply_link(home, "fossah://add?list=http://127.0.0.1:9/repos.txt?token=sekret")
+    listing = tmp_path / "repos.txt"
+    listing.write_text(
+        "https://github.com/pallets/flask\n"
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "HOSTKEYMATERIAL\n",
+        encoding="utf-8",
+    )
+    added = apply_link(home, f"fossah://add?list={listing.as_uri()}")
+    assert "https://github.com/pallets/flask" in added
+    blob = (home / "trust.json").read_text(encoding="utf-8") + (home / "sources.toml").read_text(encoding="utf-8")
+    assert "HOSTKEYMATERIAL" not in blob
+    assert "PRIVATE KEY" not in blob
+    assert "sekret" not in blob
+    assert "https://github.com/pallets/click" in before

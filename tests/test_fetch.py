@@ -222,6 +222,24 @@ def test_absolute_local_path_clones_and_a_relative_path_does_not(tmp_path: Path)
     assert not (tmp_path / "workspaces" / "rel").exists()
 
 
+def test_publish_document_redacts_embedded_credentials() -> None:
+    import json
+
+    from fossah.peers import publish_document
+
+    document = publish_document(
+        node_id="n",
+        listen_url="http://127.0.0.1:9/fossah/publish",
+        peers=[{"url": "https://user:secret@peer.example/fossah/publish", "id": "p"}],
+        repos=[{"url": "https://github.com/org/repo.git?access_token=sekret"}],
+    )
+    blob = json.dumps(document)
+    assert "secret" not in blob
+    assert "sekret" not in blob
+    assert document["repos"] == [{"url": "https://github.com/org/repo.git"}]
+    assert document["peers"] == [{"url": "https://peer.example/fossah/publish", "id": "p"}]
+
+
 def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
     import json
     import threading

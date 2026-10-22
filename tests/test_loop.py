@@ -224,6 +224,23 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     assert "https://github.com/someone/not-imported" not in (home / "trust.json").read_text(encoding="utf-8")
 
 
+def test_credential_peer_url_is_not_fetched_or_published(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _ready(home)
+    save_peers(
+        home,
+        [{"url": "https://user:sekret@peer.example/fossah/publish", "id": "", "source": "user", "endorsements": 1}],
+    )
+    save_sources(home, [{"url": "https://github.com/org/repo.git?token=othersecret", "note": "typed"}])
+    state = tick(home)
+    published = (home / "publish.json").read_text(encoding="utf-8")
+    recorded = published + json.dumps(state)
+    assert "sekret" not in recorded
+    assert "othersecret" not in published
+    assert state["peers_runtime"]["last_error"] == "peer URLs cannot embed credentials"
+    assert state["plans"] == []
+
+
 def test_demo_clone_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
@@ -449,7 +466,10 @@ def _reporter(tmp_path: Path, monkeypatch, stdout: str) -> Path:
 
 def test_reported_usage_is_metered_without_adding_the_estimate(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
-    stdout = '{"type":"result","result":"touch /tmp/fossah-do-not-run","usage":{"input_tokens":30,"output_tokens":12}}'
+    stdout = (
+        '{"type":"result","result":"touch /tmp/fossah-do-not-run sk-planner-secret",'
+        '"usage":{"input_tokens":30,"output_tokens":12}}'
+    )
     invoked = _reporter(tmp_path, monkeypatch, stdout)
     config = _ready(home)
     config["subscription"] = "claude"
@@ -473,6 +493,7 @@ def test_reported_usage_is_metered_without_adding_the_estimate(tmp_path: Path, m
     assert first["plans"][0]["subscription_executed"] is True
     assert Path(invoked.read_text(encoding="utf-8").strip()).resolve() == (home / "planner").resolve()
     assert "touch /tmp/fossah-do-not-run" not in json.dumps(first["plans"])
+    assert "sk-planner-secret" not in (home / "state.json").read_text(encoding="utf-8")
     assert not Path("/tmp/fossah-do-not-run").exists()
     text = render_text(home)
     assert "reported by the subscription" in text
@@ -867,3 +888,126 @@ def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     assert plan["fetch"]["reason"] == "git is not installed"
     assert state["ledger"]["estimated_tokens"] == 0
     assert state["loop"]["status"] == "running"
+
+
+def test_unreadable_ledger_stops_before_a_cycle_and_analytics_keeps_trust(tmp_path: Path, monkeypatch) -> None:
+    from fossah.analytics import render_text
+    from fossah.config import state_path
+    from fossah.trust import decision, remember
+
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["spending_limit_tokens"] = 100
+    config["estimate_tokens_per_cycle"] = 40
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    remember(home, [decision("link", "https://github.com/pallets/click", True, "https git repository URL")])
+    state_path(home).write_text(
+        json.dumps(
+            {
+                "ledger": {"estimated_tokens": -40, "metered_tokens": "no", "metering": "reported"},
+                "loop": {"cycles": "no", "status": "running", "reason": "sandboxed command ran"},
+                "contributions_pushed": "no",
+                "plans": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    text = render_text(home)
+    assert "spending ledger is unreadable" in text
+    assert "accepted link https://github.com/pallets/click" in text
+    state_path(home).write_text("{", encoding="utf-8")
+    assert "accepted link https://github.com/pallets/click" in render_text(home)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["status"] == "stopped"
+    assert state["loop"]["reason"] == "spending ledger is unreadable"
+    assert state["ledger"]["estimated_tokens"] >= 100
+    assert not invoked.exists()
+    assert not (home / "workspaces").exists() or not any((home / "workspaces").iterdir())
+    again = tick(home)
+    assert again["plans"] == []
+    assert again["loop"]["reason"] == "spending ledger is unreadable"
+    state_path(home).write_text("[]", encoding="utf-8")
+    listed = tick(home)
+    assert listed["plans"] == []
+    assert listed["loop"]["reason"] == "spending ledger is unreadable"
+    assert listed["ledger"]["estimated_tokens"] >= 100
+    assert not invoked.exists()
+
+
+def test_kept_drafts_do_not_write_through_a_directory_symlink(tmp_path: Path) -> None:
+    from fossah.loop import _keep_drafts
+
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_text("keep", encoding="utf-8")
+    (home / "drafts").symlink_to(outside)
+    workspace = tmp_path / "work"
+    (workspace / ".fossah").mkdir(parents=True)
+    (workspace / ".fossah" / "audit.txt").write_text("finding\n", encoding="utf-8")
+    _keep_drafts(home, workspace, "https://github.com/org/repo")
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert list(outside.rglob("audit.txt")) == []
+    assert not (home / "drafts").is_dir() or (home / "drafts").is_symlink()
+
+
+def test_kept_draft_file_symlink_and_oversized_draft_are_left_alone(tmp_path: Path) -> None:
+    from fossah.loop import _keep_drafts
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "work"
+    (workspace / ".fossah").mkdir(parents=True)
+    (workspace / ".fossah" / "audit.txt").write_text("finding\n", encoding="utf-8")
+    (workspace / ".fossah" / "issue-draft.md").write_bytes(b"x" * 1_000_001)
+    repo = "https://github.com/org/repo"
+    _keep_drafts(home, workspace, repo)
+    kept = list((home / "drafts").rglob("audit.txt"))
+    assert len(kept) == 1
+    assert kept[0].read_text(encoding="utf-8") == "finding\n"
+    assert list((home / "drafts").rglob("issue-draft.md")) == []
+    secret = tmp_path / "secret"
+    secret.write_text("do-not-touch", encoding="utf-8")
+    kept[0].unlink()
+    kept[0].symlink_to(secret)
+    (workspace / ".fossah" / "audit.txt").write_text("replacement\n", encoding="utf-8")
+    _keep_drafts(home, workspace, repo)
+    assert secret.read_text(encoding="utf-8") == "do-not-touch"
+    assert kept[0].is_symlink()
+
+
+def test_audit_still_runs_when_fossah_dir_is_a_file(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["allow_test"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(
+        home,
+        tmp_path,
+        {
+            "readme.txt": "hello\n",
+            "secret.pem": "-----BEGIN OPENSSH PRIVATE KEY-----\nHOSTKEYMATERIAL\n-----END OPENSSH PRIVATE KEY-----\n",
+            ".fossah": "not a directory\n",
+        },
+    )
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is True
+    assert plan["sandbox"]["invoked"] is True
+    assert plan["sandbox"]["ok"] is True
+    assert "private key material" in plan["sandbox"]["stdout"]
+    assert "HOSTKEYMATERIAL" not in plan["sandbox"]["stdout"]
+    assert "fossah-action=audit" in plan["sandbox"]["stdout"]

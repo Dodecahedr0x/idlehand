@@ -16,6 +16,14 @@ from fossah.home import home_lock, read_json, write_json
 
 MAX_DECISIONS = 20
 _USERINFO = re.compile(r"://[^/\s:@]+:[^/\s@]+@")
+_NESTED_CREDENTIAL = re.compile(r"[?&](?:token|password|access_token|auth)=[^&\s#]*", re.IGNORECASE)
+
+
+def scrub_secrets(text: str) -> str:
+    """Drop userinfo and credential query keys, including inside a wrapped URL."""
+    cleaned = _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(text)))
+    cleaned = re.sub(r"\?&+", "?", cleaned)
+    return re.sub(r"[?&]+$", "", cleaned)
 
 
 def now_iso() -> str:
@@ -27,8 +35,18 @@ def trust_path(home: Path) -> Path:
 
 
 def public_subject(url: str) -> str:
-    text = _USERINFO.sub("://", redact_clone_url(url))
-    return text or "link"
+    """A subject safe to store and show. Secrets and huge lines are not kept."""
+    text = scrub_secrets(url).replace("\n", " ").replace("\r", " ").strip()
+    if not text or "PRIVATE KEY" in text or len(text) > 500 or "://" not in text:
+        return "list entry"
+    return text
+
+
+def public_reason(reason: str) -> str:
+    text = scrub_secrets(reason).replace("\n", " ").replace("\r", " ").strip()
+    if not text or "PRIVATE KEY" in text:
+        return "refused"
+    return text[:500]
 
 
 def load_trust(home: Path) -> list[dict[str, Any]]:
@@ -44,7 +62,7 @@ def decision(kind: str, subject: str, accepted: bool, reason: str) -> dict[str, 
         "kind": kind,
         "subject": public_subject(subject) if subject else "list entry",
         "accepted": accepted,
-        "reason": reason,
+        "reason": public_reason(reason),
     }
 
 
