@@ -448,6 +448,20 @@ def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
     assert reason == "public clone"
 
 
+def test_assigned_credential_in_a_local_path_is_not_cloned(tmp_path: Path) -> None:
+    from idlehand.fetch import classify_clone_url
+
+    path = tmp_path / "token=sekret"
+    for url in (str(path), path.as_uri()):
+        allowed, reason = classify_clone_url(url)
+        assert allowed is None
+        assert reason == "repository URL embeds credentials"
+        assert "sekret" not in reason
+        result = clone_repository(url, tmp_path / "workspaces" / "local-secret")
+        assert result.cloned is False
+        assert "sekret" not in result.reason
+
+
 def test_percent_encoded_line_break_is_not_a_public_clone() -> None:
     from idlehand.fetch import classify_clone_url, public_url
 
