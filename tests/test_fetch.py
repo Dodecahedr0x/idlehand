@@ -305,6 +305,19 @@ def test_publish_document_redacts_embedded_credentials() -> None:
     assert "sekret" not in blob
     assert document["repos"] == [{"url": "https://github.com/org/repo.git"}]
     assert document["peers"] == [{"url": "https://peer.example/idlehand/publish", "id": "p"}]
+    labeled = publish_document(
+        node_id="password=sekret",
+        listen_url="http://127.0.0.1:9/idlehand/publish?token=sekret",
+        peers=[{"url": "https://peer.example/idlehand/publish", "id": "token=sekret"}],
+        repos=[],
+    )
+    blob = json.dumps(labeled)
+    assert "sekret" not in blob
+    assert "token=" not in blob
+    assert "password=" not in blob
+    assert labeled["node_id"] == ""
+    assert labeled["listen_url"] == "http://127.0.0.1:9/idlehand/publish"
+    assert labeled["peers"] == [{"url": "https://peer.example/idlehand/publish", "id": ""}]
 
 
 def test_publish_endpoint_does_not_follow_a_symlink(tmp_path: Path) -> None:

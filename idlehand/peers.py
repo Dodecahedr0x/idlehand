@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from idlehand.config import load_peers, save_peers
-from idlehand.fetch import contains_control_break, embeds_credentials, public_url
+from idlehand.fetch import contains_control_break, embeds_credentials, public_url, scrub_secrets
 from idlehand.home import home_lock
 from idlehand.links import LinkError, fetch_text
 from idlehand.trust import decision, public_subject
@@ -260,6 +260,16 @@ def load_peer_document(url: str, timeout: float = 5) -> dict[str, Any]:
     return payload
 
 
+def _public_label(value: object) -> str:
+    """A short label safe to publish. Credential text is dropped."""
+    if not isinstance(value, str) or contains_control_break(value):
+        return ""
+    text = scrub_secrets(value).replace("\n", " ").replace("\r", " ").strip()
+    if not text or "PRIVATE KEY" in text or len(text) > 200 or contains_control_break(text):
+        return ""
+    return text
+
+
 def publish_document(
     *,
     node_id: str,
@@ -270,10 +280,10 @@ def publish_document(
     """Public document. No subscription, spending, or home path."""
     return {
         "idlehand": 1,
-        "node_id": node_id,
-        "listen_url": listen_url,
+        "node_id": _public_label(node_id),
+        "listen_url": public_url(listen_url) if isinstance(listen_url, str) else "",
         "peers": [
-            {"url": shown, "id": peer.get("id", "")}
+            {"url": shown, "id": _public_label(peer.get("id", ""))}
             for peer in peers
             if (shown := public_url(str(peer["url"])))
         ],
