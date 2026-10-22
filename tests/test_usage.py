@@ -51,6 +51,25 @@ def test_planner_refuses_a_symlink_and_does_not_start_the_cli(tmp_path: Path) ->
     assert (outside / "keep").read_text(encoding="utf-8") == "safe"
 
 
+def test_planner_does_not_leave_a_file_behind(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    binary = tmp_path / "claude"
+    binary.write_text(
+        "#!/bin/sh\n"
+        "printf 'sk-left-behind' > \"$PWD/leak.txt\"\n"
+        "printf '%s' '{\"type\":\"result\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    result = plan_with_claude(str(binary), "https://github.com/org/repo", "audit", home)
+    assert result["tokens"] == 2
+    assert result["executed"] is True
+    assert not (home / "planner").exists()
+    leftover = " ".join(path.read_text(encoding="utf-8", errors="ignore") for path in home.rglob("*") if path.is_file())
+    assert "sk-left-behind" not in leftover
+
+
 def test_total_tokens_is_only_a_fallback() -> None:
     assert parse_reported_tokens('{"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":99}}') == 4
     assert parse_reported_tokens('{"usage":{"total_tokens":9}}') == 9

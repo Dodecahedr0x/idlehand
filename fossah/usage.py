@@ -144,6 +144,17 @@ def _empty_planner_dir(home: Path) -> Path | None:
     return path
 
 
+def _discard_planner_dir(home: Path, cwd: Path | None) -> None:
+    """Remove files the planner wrote. Do not follow a symlink out of the home."""
+    if cwd is None or cwd.is_symlink():
+        return
+    try:
+        if cwd.resolve().is_relative_to(home.resolve()):
+            shutil.rmtree(cwd, ignore_errors=True)
+    except OSError:
+        return
+
+
 def plan_with_claude(binary: str, repo_url: str, action: str, home: Path) -> dict[str, object]:
     argv = claude_argv(binary, repo_url, action)
     cwd = _empty_planner_dir(home)
@@ -155,29 +166,32 @@ def plan_with_claude(binary: str, repo_url: str, action: str, home: Path) -> dic
             "reason": "refusing to plan outside the Fossah home",
         }
     try:
-        completed = subprocess.run(
-            argv,
-            cwd=cwd,
-            env=os.environ.copy(),
-            capture_output=True,
-            text=True,
-            timeout=PLAN_TIMEOUT,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "executed": True,
-            "tokens": None,
-            "argv": argv,
-            "reason": "subscription planner timed out",
-        }
-    except OSError as exc:
-        return {
-            "executed": False,
-            "tokens": None,
-            "argv": argv,
-            "reason": f"could not run the subscription CLI: {exc}",
-        }
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                timeout=PLAN_TIMEOUT,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "executed": True,
+                "tokens": None,
+                "argv": argv,
+                "reason": "subscription planner timed out",
+            }
+        except OSError as exc:
+            return {
+                "executed": False,
+                "tokens": None,
+                "argv": argv,
+                "reason": f"could not run the subscription CLI: {exc}",
+            }
+    finally:
+        _discard_planner_dir(home, cwd)
     tokens = parse_reported_tokens(completed.stdout or "")
     if tokens is None:
         return {
