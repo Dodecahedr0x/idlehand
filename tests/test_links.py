@@ -316,6 +316,27 @@ def test_encoded_link_text_is_not_stored(tmp_path: Path) -> None:
     assert "unsupported IdleHand link action" in blob
 
 
+def test_repeatedly_encoded_token_in_a_list_file_is_not_stored(tmp_path: Path) -> None:
+    from idlehand.analytics import render_text
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    listing = tmp_path / "repos.txt"
+    listing.write_text(
+        "https://github.com/org/repo.git%2525253Ftoken%2525253Dsekret\n"
+        "https://user%3Asekret%40github.com/org/other\n"
+        "https://github.com/pallets/jinja\n",
+        encoding="utf-8",
+    )
+    added = apply_link(home, f"idlehand://add?list={listing.as_uri()}")
+    assert added == ["https://github.com/pallets/jinja"]
+    blob = (home / "trust.json").read_text(encoding="utf-8")
+    blob += (home / "sources.toml").read_text(encoding="utf-8")
+    blob += render_text(home)
+    assert "sekret" not in blob
+    assert "credentials" in blob
+
+
 def test_former_link_scheme_is_refused(tmp_path: Path) -> None:
     from idlehand.analytics import render_text
 

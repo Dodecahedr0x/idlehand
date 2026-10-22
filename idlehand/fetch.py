@@ -41,8 +41,8 @@ def _without_credential_keys(text: str) -> str:
     return urllib.parse.urlencode(kept)
 
 
-def _percent_decoded(text: str, rounds: int = 3) -> str:
-    """Decode percent-encoding a few times. A credential is still a credential when encoded."""
+def _percent_decoded(text: str, rounds: int = 32) -> str:
+    """Decode percent-encoding until it settles. A credential stays a credential when encoded again."""
     current = text
     for _ in range(rounds):
         decoded = urllib.parse.unquote(current)

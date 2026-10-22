@@ -317,6 +317,18 @@ def test_unsupported_peer_scheme_does_not_keep_the_raw_url(tmp_path) -> None:
     from idlehand.loop import tick
 
     assert explain_peer_url("password=sekret", HEURISTIC) == (False, "peer URLs cannot embed credentials")
+    encoded = "https://user%25253Asekret%252540peer.example/idlehand/publish"
+    assert explain_peer_url(encoded, HEURISTIC) == (False, "peer URLs cannot embed credentials")
+    chosen, decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents={"https://direct.example/p": {"peers": [encoded], "repos": []}},
+        existing_urls=set(),
+        heuristic=HEURISTIC,
+    )
+    assert chosen == []
+    assert "sekret" not in json.dumps(decisions)
     assert explain_peer_url("ssh://git.example/org/repo", HEURISTIC) == (False, "unsupported peer URL scheme: ssh")
     home = tmp_path / "home"
     config = ensure_home(home)

@@ -414,6 +414,7 @@ def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
         "https://github.com/org/repo.git?token%3Dsekret",
         "https://user%3Asekret%40github.com/org/repo",
         "https://github.com/org/repo.git%253Ftoken%253Dsekret",
+        "https://github.com/org/repo.git%2525253Ftoken%2525253Dsekret",
         "https://example.com/password=sekret",
     ]
     for url in encoded:
