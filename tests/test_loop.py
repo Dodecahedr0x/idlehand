@@ -1311,6 +1311,23 @@ def test_audit_still_runs_when_idlehand_dir_is_a_file(tmp_path: Path, monkeypatc
     assert "idlehand-action=audit" in plan["sandbox"]["stdout"]
 
 
+def test_quoted_demo_flag_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["demo"] = "false"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["reason"] == "demo is unreadable"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert list((home / "workspaces").iterdir()) == []
+
+
 def test_quoted_sandbox_execute_does_not_run(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)

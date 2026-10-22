@@ -682,7 +682,12 @@ def tick(home: Path) -> dict[str, Any]:
             return _persist(home, config, peers, sources, state, write_publish=False)
         status = inspect_subscription(str(config.get("subscription", "")))
         _stamp_node(state, status)
-        demo = bool(config.get("demo"))
+        raw_demo = config.get("demo", False)
+        if not isinstance(raw_demo, bool):
+            state["loop"]["status"] = "stopped"
+            state["loop"]["reason"] = "demo is unreadable"
+            return _persist(home, config, peers, sources, state, write_publish=peers_ok and sources_ok)
+        demo = raw_demo
         if demo or status.connected:
             job = _prepare_cycle(home, config, sources, state, demo=demo)
             if job is not None and not job["refusal"]:
