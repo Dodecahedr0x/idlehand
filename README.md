@@ -135,7 +135,7 @@ Real:
 Not done in this slice:
 
 - Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
-- Issue and pull request drafts stay in the workspace. Nothing is pushed. `contributions pushed` stays at 0.
+- Issue and pull request drafts are copied into the Fossah home. Nothing is pushed. `contributions pushed` stays at 0.
 - Demo output is not a contribution.
 
 ## Tests

@@ -94,6 +94,9 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     assert "fossah-action=pull_request" in pull["sandbox"]["stdout"]
     draft = _workspace(home, url) / ".fossah" / "pr-draft.md"
     assert "not pushed" in draft.read_text(encoding="utf-8")
+    kept = list((home / "drafts").rglob("issue-draft.md"))
+    assert kept
+    assert "not sent" in kept[0].read_text(encoding="utf-8")
     after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path / "sample", text=True).strip()
     assert after == source_head
     stopped = tick(home)
@@ -106,6 +109,20 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     assert "local estimate, not billed usage" in text
     assert "command (ran on the trusted side):" in text
     assert "contributed=yes" in text
+
+
+def test_kept_drafts_do_not_follow_a_symlink(tmp_path: Path) -> None:
+    from fossah.loop import _keep_drafts
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "work"
+    (workspace / ".fossah").mkdir(parents=True)
+    secret = tmp_path / "secret"
+    secret.write_text("host-secret", encoding="utf-8")
+    (workspace / ".fossah" / "issue-draft.md").symlink_to(secret)
+    _keep_drafts(home, workspace, "https://github.com/org/repo")
+    assert secret.read_text(encoding="utf-8") == "host-secret"
+    assert not (home / "drafts").exists() or not list((home / "drafts").rglob("issue-draft.md"))
 
 
 def test_zero_limit_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
@@ -348,6 +365,8 @@ def test_audit_and_issue_drafts_stay_local(tmp_path: Path, monkeypatch) -> None:
     draft = (_workspace(home, url) / ".fossah" / "issue-draft.md").read_text(encoding="utf-8")
     assert "not filed" in draft
     assert "private key" in draft
+    kept_audit = list((home / "drafts").rglob("audit.txt"))
+    assert kept_audit and "private key" in kept_audit[0].read_text(encoding="utf-8")
     assert second["contributions_pushed"] == 0
 
 

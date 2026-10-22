@@ -128,6 +128,33 @@ def _workspace(home: Path, repo_url: str) -> Path:
     return home / "workspaces" / slug
 
 
+def _keep_drafts(home: Path, workspace: Path, repo_url: str) -> None:
+    """Copy sandbox drafts out of the clone before the next cycle replaces it."""
+    produced = workspace / ".fossah"
+    if not produced.is_dir() or produced.is_symlink():
+        return
+    try:
+        if not produced.resolve().is_relative_to(workspace.resolve()):
+            return
+    except OSError:
+        return
+    destination = home / "drafts" / hashlib.sha256(repo_url.encode()).hexdigest()[:16]
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("audit.txt", "issue-draft.md", "pr-draft.md"):
+        source = produced / name
+        if not source.is_file() or source.is_symlink():
+            continue
+        try:
+            if not source.resolve().is_relative_to(workspace.resolve()):
+                continue
+            if source.stat().st_size > 1_000_000:
+                continue
+            payload = source.read_bytes()
+        except OSError:
+            continue
+        (destination / name).write_bytes(payload)
+
+
 def _write_publish(home: Path, config: dict[str, Any], peers: list[dict[str, Any]], repos: list[dict[str, str]], listen_url: str) -> None:
     document = publish_document(
         node_id=str(config.get("node_id", "")),
@@ -303,6 +330,8 @@ def _run_job(job: dict[str, Any]) -> dict[str, Any]:
             "cloned": True,
             "planner": planner,
         }
+    if result.invoked:
+        _keep_drafts(job["planner_home"], job["workspace"], str(job["repo_url"]))
     return {"fetch": fetch.as_dict(), "sandbox": result.as_dict(), "cloned": True, "planner": planner}
 
 
