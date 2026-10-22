@@ -4,6 +4,8 @@ People who still have credits on Claude, Codex, or Cursor can point those subscr
 
 Discovery stays on your machine. There is no IdleHand catalog.
 
+IdleHand is a layer on Radicle. The node id is the Radicle node id when `rad self --nid` can report one. GitHub interop is optional, and init, connect, and the contribution loop do not need it. The GitHub repository that holds this code is not the forge IdleHand manages.
+
 ## Install
 
 ```bash
@@ -100,9 +102,31 @@ Second-degree `file:` URLs are ignored. URLs with a username or password are rej
 
 The listen port is bound to loopback until you change `publish.host`.
 
-## GitHub delegation
+## Radicle
 
-Management is separate from the contribution loop, and nothing is delegated automatically. GitHub is the only forge. IdleHand uses the `gh` login already on the machine. It does not store a token.
+Management is separate from the contribution loop, and nothing is delegated automatically. IdleHand delegates a repository by its RID, and only when `rad inspect --identity` shows that the local Radicle identity is a delegate. Issues and patch text go through `rad` on the trusted side.
+
+```bash
+idlehand rad status
+idlehand rad delegate rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
+idlehand rad revoke rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
+idlehand rad delegated
+idlehand rad issue create rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --title "Broken link" --body "The README link 404s."
+idlehand rad issue update rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 e4255cc2a0a65b543c2b5badac14bf9e0d9f409f --body "Still broken."
+idlehand rad issue send rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
+idlehand rad patch update rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2 --title "Fix the link" --body "Updates the README."
+idlehand rad patch send rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2
+```
+
+`rad issue open` and `rad issue edit` create and update issues. `rad patch edit` changes the title and description of a patch that already exists. `issue send` and `patch send` use the local draft stored for that RID. If `rad` is missing, the node is not running, this identity does not control the repository, or `rad` does not confirm the result, the command says so and does not record a delegation or a sent issue or patch.
+
+Opening a new patch is `git push rad HEAD:refs/patches`. IdleHand does not run that push.
+
+`rad` keys stay in the Radicle home. They are not copied into the sandbox, the publish feed, or analytics.
+
+## GitHub interop
+
+GitHub is optional. IdleHand uses the `gh` login already on the machine. It does not store a token, and it does not require `gh` for init, connect, or the contribution loop.
 
 ```bash
 idlehand github status
@@ -110,20 +134,11 @@ idlehand github repos
 idlehand github delegate octocat/hello
 idlehand github revoke octocat/hello
 idlehand github delegated
-```
-
-`github repos` lists repositories that login owns or administers. `delegate` records one of them. Issues and pull requests run `gh` on the trusted side, and only for a delegated repository:
-
-```bash
 idlehand github issue create octocat/hello --title "Broken link" --body "The README link 404s."
-idlehand github issue update octocat/hello 7 --body "Still broken."
-idlehand github issue send octocat/hello
 idlehand github pr create octocat/hello --title "Fix the link" --body "Updates the README." --head fix-link
-idlehand github pr update octocat/hello 4 --title "Fix the link"
-idlehand github pr send octocat/hello --head fix-link
 ```
 
-`issue send` and `pr send` use the local draft the contribution loop kept for that repository. `pr create` opens a pull request for a branch already on GitHub. It does not push. If `gh` is missing, not logged in, or does not confirm the result, the command says so and stops.
+`github repos` lists repositories that login owns or administers and does not delegate them. Issues and pull requests run `gh` only for a delegated `owner/name`. `pr create` opens a pull request for a branch already on GitHub. It does not push. If `gh` is missing, not logged in, or does not confirm the result, the command says so and stops.
 
 ## Sandbox
 
@@ -154,12 +169,15 @@ Real:
 - Linux protocol-handler registration
 - peer publish endpoint, direct fetch, and the peers-of-peers heuristic
 - container command line, and the namespace jail when Docker and Podman are absent
+- explicit Radicle delegation by RID, with issues and patch edits through the local `rad` CLI
+- optional GitHub delegation through the `gh` login already on the machine
 
 Not done in this slice:
 
 - Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
-- The contribution loop copies issue and pull request drafts into the IdleHand home and does not send them. `contributions pushed` stays at 0. Sending a draft is the explicit `idlehand github issue send` or `pr send` command, and only for a repository you delegated.
-- Forges other than GitHub.
+- The contribution loop copies issue and pull request drafts into the IdleHand home and does not send them. `contributions pushed` stays at 0. Sending a draft is explicit: `idlehand rad issue send` or `patch send` for a delegated RID, or `idlehand github issue send` or `pr send` for a delegated GitHub repository.
+- Opening a new Radicle patch. That is a `git push` to `refs/patches`, and IdleHand does not push.
+- Forges other than the Radicle path and the optional GitHub interop.
 - Demo output is not a contribution.
 
 ## Tests

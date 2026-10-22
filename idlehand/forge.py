@@ -1,12 +1,12 @@
-"""Forge boundary for owner delegation.
+"""Optional GitHub interop.
 
-A forge lists repositories the logged-in user owns or administers, and it
-creates or updates issues and pull requests. IdleHand does not store a token
-and does not run an OAuth broker. The only registered forge is GitHub.
+IdleHand's repository management is Radicle, through the local `rad` CLI.
+This module is the extra GitHub path: `gh` already logged in on the machine,
+explicit delegation of `owner/name`, and issues and pull requests. It does not
+store a token and does not run an OAuth broker.
 
-A second forge would implement `Forge` and add its name in `registered_forges`.
-It would use that forge's existing CLI login, the same delegation file, and
-the same rule: management runs only after an explicit per-repo delegation.
+A further forge would implement `Forge` and add its name in `registered_forges`.
+Radicle is not that forge. It is the primary path, and it delegates by RID.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ from idlehand.home import atomic_write, dump_toml, home_lock, read_toml
 
 _PART = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}")
 _PROVIDER = re.compile(r"[a-z][a-z0-9-]{0,20}")
+_BASE58 = r"[1-9A-HJ-NP-Za-km-z]"
+_RID = re.compile(rf"rad:z{_BASE58}{{20,40}}")
 _PRIVATE_KEY = (
     "BEGIN PRIVATE KEY",
     "BEGIN RSA PRIVATE KEY",
@@ -33,7 +35,8 @@ _PRIVATE_KEY = (
 )
 
 DELEGATED_HEADER = """# Repos this node may manage. IdleHand adds one only when you delegate it.
-# GitHub credentials stay in gh. They are not written here.
+# A Radicle row is a RID. A GitHub row is owner/name.
+# rad keys and gh credentials are not written here.
 """
 
 
@@ -103,6 +106,25 @@ def provider_label(name: str) -> str:
     return ""
 
 
+def parse_rid(value: str) -> str | None:
+    """A Radicle repository id, `rad:z…`. Nothing else."""
+    text = value.strip()
+    if not text or contains_control_break(text) or embeds_credentials(text):
+        return None
+    if _RID.fullmatch(text) is None:
+        return None
+    return text
+
+
+def canonical_repo(provider: str, repo: str) -> str | None:
+    """The stored form of a delegated repo, or None when this provider cannot name it."""
+    if provider == "github":
+        return parse_repo_name(repo)
+    if provider == "radicle":
+        return parse_rid(repo)
+    return None
+
+
 def parse_repo_name(value: str) -> str | None:
     """An owner/name, or a github.com URL that names one. Nothing else."""
     text = value.strip()
@@ -153,7 +175,7 @@ def delegated_path(home: Path) -> Path:
 
 
 def load_delegated(home: Path) -> list[tuple[str, str]] | None:
-    """Delegated (provider, owner/name) rows. None means the file cannot be trusted."""
+    """Delegated (provider, repo) rows. None means the file cannot be trusted."""
     path = delegated_path(home)
     if path.is_symlink():
         return None
@@ -176,8 +198,8 @@ def load_delegated(home: Path) -> list[tuple[str, str]] | None:
         repo = row.get("repo")
         if not isinstance(provider, str) or not isinstance(repo, str):
             return None
-        name = parse_repo_name(repo)
-        if provider not in registered_forges() or name is None:
+        name = canonical_repo(provider, repo)
+        if name is None:
             return None
         cleaned.append((provider, name))
     return cleaned
@@ -197,7 +219,11 @@ def save_delegated(home: Path, rows: list[tuple[str, str]]) -> bool:
 
 def _known(rows: list[tuple[str, str]], provider: str, repo: str) -> str | None:
     for item_provider, name in rows:
-        if item_provider == provider and name.lower() == repo.lower():
+        if item_provider != provider:
+            continue
+        if provider == "github" and name.lower() == repo.lower():
+            return name
+        if provider != "github" and name == repo:
             return name
     return None
 

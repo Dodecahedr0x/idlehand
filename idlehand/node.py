@@ -87,6 +87,9 @@ def _listen_address(config: dict) -> tuple[str, int, bool]:
 
 def serve(home: Path) -> None:
     config = ensure_home(home)
+    from idlehand.radicle import remember_identity
+
+    remember_identity(home)
     stopped = [False]
 
     def handle(signum: int, frame: object) -> None:

@@ -34,6 +34,17 @@ from idlehand.forge import (
     update_pull_request,
 )
 from idlehand.handler import register_protocol_handler
+from idlehand.radicle import (
+    create_issue as create_rad_issue,
+    delegate_rid,
+    node_running,
+    remember_identity,
+    revoke_rid,
+    send_issue_draft as send_rad_issue,
+    send_patch_draft,
+    update_issue as update_rad_issue,
+    update_patch,
+)
 from idlehand.home import resolve_home
 from idlehand.links import LinkError, apply_link
 from idlehand.node import serve
@@ -77,6 +88,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"Source list: {sources_path(home)}")
     print(f"Protocol handler: {handler}")
     print(f"Default spending limit: {DEFAULT_SPENDING_LIMIT_TOKENS} tokens")
+    nid, detail = remember_identity(home)
+    if nid:
+        print(f"Radicle node id: {nid}")
+    else:
+        print(f"{detail}. This node id stays local.")
     return 0
 
 
@@ -317,6 +333,56 @@ def _body_text(args: argparse.Namespace) -> tuple[bool, str]:
         return False, ""
 
 
+def cmd_rad(args: argparse.Namespace) -> int:
+    home = _home(args)
+    ensure_home(home)
+    action = args.rad_action
+    if action == "status":
+        nid, identity_detail = remember_identity(home)
+        if identity_detail == "rad is not installed":
+            print("rad is not installed", file=sys.stderr)
+            return 1
+        running = node_running()
+        if nid:
+            print(f"Radicle node id: {nid}")
+        else:
+            print(identity_detail, file=sys.stderr)
+        print(running.detail, file=sys.stdout if running.ok else sys.stderr)
+        return 0 if nid and running.ok else 1
+    if action == "delegated":
+        rows = load_delegated(home)
+        if rows is None:
+            print("the delegation list is unreadable", file=sys.stderr)
+            return 1
+        mine = [name for provider, name in rows if provider == "radicle"]
+        if not mine:
+            print("No repositories are delegated.")
+            return 0
+        for name in mine:
+            print(f"radicle {name}")
+        return 0
+    if action == "delegate":
+        return _finish(delegate_rid(home, args.repo))
+    if action == "revoke":
+        return _finish(revoke_rid(home, args.repo))
+    if action in {"issue-create", "issue-update", "patch-update"}:
+        ok, body = _body_text(args)
+        if not ok:
+            return 1
+        title = getattr(args, "title", "") or ""
+        if action == "issue-create":
+            return _finish(create_rad_issue(home, args.repo, title, body))
+        if action == "issue-update":
+            return _finish(update_rad_issue(home, args.repo, args.cob_id, title, body))
+        return _finish(update_patch(home, args.repo, args.cob_id, title, body))
+    if action == "issue-send":
+        return _finish(send_rad_issue(home, args.repo))
+    if action == "patch-send":
+        return _finish(send_patch_draft(home, args.repo, args.cob_id))
+    print("IdleHand has no Radicle command for that", file=sys.stderr)
+    return 1
+
+
 def cmd_github(args: argparse.Namespace) -> int:
     home = _home(args)
     ensure_home(home)
@@ -388,6 +454,52 @@ def _add_text_flags(parser: argparse.ArgumentParser, *, title_required: bool) ->
         parser.add_argument("--title", default="")
     parser.add_argument("--body", default=None)
     parser.add_argument("--body-file", default="")
+
+
+def _add_rad_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    rad = sub.add_parser("rad", help="delegate Radicle repositories this identity controls")
+    commands = rad.add_subparsers(dest="rad_group", required=True)
+
+    status = commands.add_parser("status", help="show the Radicle node id and whether the node is running")
+    status.set_defaults(func=cmd_rad, rad_action="status")
+
+    delegated = commands.add_parser("delegated", help="list Radicle repositories explicitly delegated to this node")
+    delegated.set_defaults(func=cmd_rad, rad_action="delegated")
+
+    delegate = commands.add_parser("delegate", help="delegate management of one repository by RID")
+    delegate.add_argument("repo")
+    delegate.set_defaults(func=cmd_rad, rad_action="delegate")
+
+    revoke = commands.add_parser("revoke", help="revoke management of one repository by RID")
+    revoke.add_argument("repo")
+    revoke.set_defaults(func=cmd_rad, rad_action="revoke")
+
+    issue = commands.add_parser("issue", help="open, edit, or send an issue on a delegated repository")
+    issue_commands = issue.add_subparsers(dest="issue_action", required=True)
+    issue_create = issue_commands.add_parser("create")
+    issue_create.add_argument("repo")
+    _add_text_flags(issue_create, title_required=True)
+    issue_create.set_defaults(func=cmd_rad, rad_action="issue-create")
+    issue_update = issue_commands.add_parser("update")
+    issue_update.add_argument("repo")
+    issue_update.add_argument("cob_id")
+    _add_text_flags(issue_update, title_required=False)
+    issue_update.set_defaults(func=cmd_rad, rad_action="issue-update")
+    issue_send = issue_commands.add_parser("send", help="send the local issue draft")
+    issue_send.add_argument("repo")
+    issue_send.set_defaults(func=cmd_rad, rad_action="issue-send")
+
+    patch = commands.add_parser("patch", help="edit or send patch text on a delegated repository")
+    patch_commands = patch.add_subparsers(dest="patch_action", required=True)
+    patch_update = patch_commands.add_parser("update", help="edit the title and description of an existing patch")
+    patch_update.add_argument("repo")
+    patch_update.add_argument("cob_id")
+    _add_text_flags(patch_update, title_required=True)
+    patch_update.set_defaults(func=cmd_rad, rad_action="patch-update")
+    patch_send = patch_commands.add_parser("send", help="edit an existing patch from the local draft")
+    patch_send.add_argument("repo")
+    patch_send.add_argument("cob_id")
+    patch_send.set_defaults(func=cmd_rad, rad_action="patch-send")
 
 
 def _add_forge_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str) -> None:
@@ -524,6 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
     sources = sub.add_parser("sources", help="print the local source list")
     sources.set_defaults(func=cmd_sources)
 
+    _add_rad_parser(sub)
     for forge_name in registered_forges():
         _add_forge_parser(sub, forge_name)
 
