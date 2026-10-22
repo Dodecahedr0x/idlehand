@@ -41,10 +41,15 @@ def _without_credential_keys(text: str) -> str:
     return urllib.parse.urlencode(kept)
 
 
-def _percent_decoded(text: str, rounds: int = 32) -> str:
-    """Decode percent-encoding until it settles. A credential stays a credential when encoded again."""
+def _percent_decoded(text: str) -> str:
+    """Decode percent-encoding until it settles.
+
+    Each successful decode shortens the text, so the loop is bounded by the
+    length of the input. A credential stays a credential however many times it
+    was encoded.
+    """
     current = text
-    for _ in range(rounds):
+    for _ in range(max(len(text), 1)):
         decoded = urllib.parse.unquote(current)
         if decoded == current:
             break

@@ -409,6 +409,10 @@ def test_local_clone_and_non_repo(tmp_path: Path) -> None:
 def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
     from idlehand.fetch import classify_clone_url, embeds_credentials, scrub_secrets
 
+    layered = "https://github.com/org/repo.git?token=sekret"
+    layered = layered.replace("?", "%3F").replace("=", "%3D")
+    for _ in range(40):
+        layered = layered.replace("%", "%25")
     encoded = [
         "https://github.com/org/repo.git%3Ftoken%3Dsekret",
         "https://github.com/org/repo.git?token%3Dsekret",
@@ -416,6 +420,7 @@ def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
         "https://github.com/org/repo.git%253Ftoken%253Dsekret",
         "https://github.com/org/repo.git%2525253Ftoken%2525253Dsekret",
         "https://example.com/password=sekret",
+        layered,
     ]
     for url in encoded:
         assert embeds_credentials(url)
