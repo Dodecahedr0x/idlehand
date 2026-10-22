@@ -16,6 +16,7 @@ from pathlib import Path
 from fossah import __version__
 from fossah.config import load_sources, save_sources
 from fossah.home import home_lock
+from fossah.trust import decision, remember
 
 MAX_LIST_BYTES = 1_000_000
 USER_AGENT = f"fossah/{__version__}"
@@ -57,7 +58,6 @@ def parse_fossah_link(url: str) -> ParsedLink:
     list_url = lists[0].strip() if lists else ""
     if list_url:
         _validate_list_url(list_url)
-    repos = [_validate_repo_url(repo) for repo in repos]
     if not repos and not list_url:
         raise LinkError("the link has no repos and no list file")
     return ParsedLink(repos=repos, list_url=list_url)
@@ -65,6 +65,52 @@ def parse_fossah_link(url: str) -> ParsedLink:
 
 def _split_repo_field(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def judge_repo_url(url: str) -> tuple[bool, str, str]:
+    """Accept or refuse one repository URL from a Fossah link."""
+    try:
+        cleaned = _validate_repo_url(url)
+    except LinkError as exc:
+        return False, url.strip(), str(exc)
+    scheme = urllib.parse.urlparse(cleaned).scheme
+    return True, cleaned, f"{scheme} git repository URL"
+
+
+def judge_list_text(text: str) -> list[tuple[bool, str, str]]:
+    """Judge each repo in a publisher list. One bad line does not reject the rest."""
+    stripped = text.strip()
+    if not stripped:
+        return []
+    if stripped.startswith("{") or stripped.startswith("["):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise LinkError(f"list file is not valid JSON: {exc}") from exc
+        if isinstance(payload, dict):
+            values = payload.get("repos", [])
+        elif isinstance(payload, list):
+            values = payload
+        else:
+            raise LinkError("list file JSON must be a list or an object with repos")
+        if not isinstance(values, list):
+            raise LinkError("list file JSON must be a list or an object with repos")
+        judged: list[tuple[bool, str, str]] = []
+        for item in values:
+            if isinstance(item, str):
+                judged.append(judge_repo_url(item))
+            elif isinstance(item, dict) and isinstance(item.get("url"), str):
+                judged.append(judge_repo_url(item["url"]))
+            else:
+                judged.append((False, "", "each repo in the list file needs a URL"))
+        return judged
+    judged = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        judged.append(judge_repo_url(line))
+    return judged
 
 
 def _validate_repo_url(url: str) -> str:
@@ -180,9 +226,43 @@ def add_repos(home: Path, urls: list[str]) -> list[str]:
         return added
 
 
-def apply_link(home: Path, url: str) -> list[str]:
-    parsed = parse_fossah_link(url)
-    repos = list(parsed.repos)
+class LinkApply(list[str]):
+    """Repos added by a link, plus the accept and refuse decisions."""
+
+    def __init__(self, added: list[str], decisions: list[dict[str, object]]):
+        super().__init__(added)
+        self.decisions = decisions
+
+
+def apply_link(home: Path, url: str) -> LinkApply:
+    try:
+        parsed = parse_fossah_link(url)
+    except LinkError as exc:
+        choices = [decision("link", url, False, str(exc))]
+        remember(home, choices)
+        raise
+    judged: list[tuple[bool, str, str]] = [judge_repo_url(repo) for repo in parsed.repos]
+    decisions: list[dict[str, object]] = []
     if parsed.list_url:
-        repos.extend(repos_from_list_text(fetch_text(parsed.list_url)))
-    return add_repos(home, repos)
+        try:
+            judged.extend(judge_list_text(fetch_text(parsed.list_url)))
+        except LinkError as exc:
+            decisions.append(decision("link", parsed.list_url, False, str(exc)))
+    known = {_normalize_repo(repo["url"]) for repo in load_sources(home)}
+    fresh: list[str] = []
+    for accepted, cleaned, reason in judged:
+        if not accepted:
+            decisions.append(decision("link", cleaned, False, reason))
+            continue
+        if _normalize_repo(cleaned) in known:
+            decisions.append(decision("link", cleaned, True, "already in the local source list"))
+            continue
+        decisions.append(decision("link", cleaned, True, reason))
+        fresh.append(cleaned)
+        known.add(_normalize_repo(cleaned))
+    added = add_repos(home, fresh) if fresh else []
+    remember(home, decisions)
+    if not any(item["accepted"] for item in decisions):
+        reason = str(decisions[-1]["reason"]) if decisions else "the link added no repositories"
+        raise LinkError(reason)
+    return LinkApply(added, decisions)

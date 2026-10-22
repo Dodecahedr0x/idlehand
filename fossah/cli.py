@@ -147,6 +147,19 @@ def cmd_limit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_link(added: list[str]) -> None:
+    decisions = getattr(added, "decisions", [])
+    for item in decisions:
+        if not item.get("accepted"):
+            print(f"refused {item.get('subject', '')}: {item.get('reason', '')}", file=sys.stderr)
+    if added:
+        print("Added to the local source list:")
+        for url in added:
+            print(f"  {url}")
+    else:
+        print("Those repos were already in the local source list.")
+
+
 def cmd_link(args: argparse.Namespace) -> int:
     home = _home(args)
     ensure_home(home)
@@ -155,12 +168,7 @@ def cmd_link(args: argparse.Namespace) -> int:
     except LinkError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    if added:
-        print("Added to the local source list:")
-        for url in added:
-            print(f"  {url}")
-    else:
-        print("Those repos were already in the local source list.")
+    _print_link(added)
     return 0
 
 
@@ -357,12 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         except LinkError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        if added:
-            print("Added to the local source list:")
-            for url in added:
-                print(f"  {url}")
-        else:
-            print("Those repos were already in the local source list.")
+        _print_link(added)
         return 0
     parser = build_parser()
     args = parser.parse_args(args_list)

@@ -33,10 +33,11 @@ from fossah.peers import (
     normalize_peer_url,
     normalize_safe,
     publish_document,
-    select_second_degree,
+    review_second_degree,
 )
 from fossah.sandbox import detect_runtime, run
 from fossah.subscriptions import inspect_subscription, subscription_command
+from fossah.trust import extend_trust
 from fossah.usage import claude_argv, plan_with_claude
 
 ACTIONS = (
@@ -156,7 +157,7 @@ def _fetch_peers(
     config: dict[str, Any],
     listen_url: str,
     home: Path,
-) -> tuple[list[PeerCandidate], int, list[str], dict[str, str]]:
+) -> tuple[list[PeerCandidate], int, list[str], dict[str, str], list[dict[str, Any]]]:
     documents: dict[str, dict[str, Any]] = {}
     ignored = 0
     errors: list[str] = []
@@ -182,7 +183,7 @@ def _fetch_peers(
             continue
     self_urls = {normalize_safe(listen_url)} if listen_url else set()
     self_urls.add((home / "publish.json").resolve().as_uri())
-    additions = select_second_degree(
+    additions, trust_decisions = review_second_degree(
         self_id=str(config.get("node_id", "")),
         self_urls=self_urls,
         direct_peers=peers,
@@ -190,7 +191,7 @@ def _fetch_peers(
         existing_urls=set(existing),
         heuristic=config["peer_heuristic"],
     )
-    return additions, ignored, errors, id_updates
+    return additions, ignored, errors, id_updates, trust_decisions
 
 
 def _prepare_cycle(
@@ -420,10 +421,11 @@ def tick(home: Path) -> dict[str, Any]:
     ignored = 0
     errors: list[str] = []
     id_updates: dict[str, str] = {}
+    trust_decisions: list[dict[str, Any]] = []
     fetched = False
     if peers and epoch - last >= interval:
         fetched = True
-        additions, ignored, errors, id_updates = _fetch_peers(
+        additions, ignored, errors, id_updates, trust_decisions = _fetch_peers(
             peers, config=config, listen_url=listen_url, home=home
         )
     job: dict[str, Any] | None = None
@@ -469,6 +471,7 @@ def tick(home: Path) -> dict[str, Any]:
                 state["peers_runtime"].get("ignored_remote_repos") or 0
             ) + ignored
             state["peers_runtime"]["last_error"] = "; ".join(errors)[:500]
+            extend_trust(home, trust_decisions)
         save_peers(home, peers)
         status = inspect_subscription(str(config.get("subscription", "")))
         _stamp_node(state, status)

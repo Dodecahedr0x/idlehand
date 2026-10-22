@@ -179,7 +179,11 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     published = json.loads((home / "publish.json").read_text(encoding="utf-8"))
     assert "subscription" not in published
     assert "ledger" not in published
+    assert "trust" not in published
     assert published["repos"]
+    text = render_text(home)
+    assert "accepted peer https://second.example/fossah/publish — https peer URL" in text
+    assert "https://github.com/someone/not-imported" not in (home / "trust.json").read_text(encoding="utf-8")
 
 
 def test_demo_clone_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:

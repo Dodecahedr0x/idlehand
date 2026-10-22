@@ -10,6 +10,7 @@ from typing import Any
 from fossah.config import load_config, load_peers, load_sources, state_path
 from fossah.home import read_json
 from fossah.process import alive_pid
+from fossah.trust import load_trust
 
 
 def snapshot(home: Path) -> dict[str, Any]:
@@ -27,6 +28,7 @@ def snapshot(home: Path) -> dict[str, Any]:
         "rules": config.get("rules", {}),
         "sources": load_sources(home) if (home / "sources.toml").exists() else [],
         "peers": load_peers(home) if (home / "peers.toml").exists() else [],
+        "trust": load_trust(home),
         "state": state,
     }
 
@@ -91,6 +93,14 @@ def render_text(home: Path) -> str:
     ]
     if recorded == 0:
         lines.append("  nothing was contributed")
+    trust = snap.get("trust") or []
+    if isinstance(trust, list) and trust:
+        lines.append("  trust:")
+        for item in trust[-8:]:
+            if not isinstance(item, dict):
+                continue
+            mark = "accepted" if item.get("accepted") else "refused"
+            lines.append(f"    {mark} {item.get('kind', '')} {item.get('subject', '')} — {item.get('reason', '')}")
     if peers_runtime.get("last_error"):
         lines.append(f"  peer fetch: {peers_runtime['last_error']}")
     if not plans:

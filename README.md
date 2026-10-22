@@ -77,7 +77,7 @@ fossah link 'fossah://add?repo=https://github.com/pallets/click&repo=https://git
 fossah link 'fossah://add?list=https://example.com/fossah-repos.txt'
 ```
 
-A bare `fossah:` URL works too, which is what a desktop handler passes. On Linux, `fossah init` registers an `x-scheme-handler/fossah` handler when the XDG directories can be written. A `list` URL is fetched from the host in the link. Redirects are not followed.
+A bare `fossah:` URL works too, which is what a desktop handler passes. On Linux, `fossah init` registers an `x-scheme-handler/fossah` handler when the XDG directories can be written. A `list` URL is fetched from the host in the link. Redirects are not followed. One bad repository URL does not drop the others. `fossah analytics` shows whether each URL was accepted or refused, and why.
 
 A list file is one repository URL per line (`#` starts a comment), or JSON: `{"repos": ["https://github.com/org/name"]}`.
 
@@ -98,7 +98,7 @@ The node publishes its own peer list and repo list at `/fossah/publish`. It fetc
 - `allowed_hosts` (empty): if you set it, the host must be listed
 - `blocked_hosts` (empty)
 
-Second-degree `file:` URLs are ignored. URLs with a username or password are rejected. Repo lists found on peers are counted and left out of `sources.toml`. The knobs are in `config.toml` under `peer_heuristic`. There is no plugin system.
+Second-degree `file:` URLs are ignored. URLs with a username or password are rejected. Repo lists found on peers are counted and left out of `sources.toml`. The same analytics view shows why a second-degree peer was accepted or refused. The knobs are in `config.toml` under `peer_heuristic`. There is no plugin system.
 
 The listen port is bound to loopback until you change `publish.host`.
 
