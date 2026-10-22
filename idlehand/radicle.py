@@ -40,7 +40,7 @@ from idlehand.forge import (
 from idlehand.home import home_lock
 
 _NID = re.compile(r"z6Mk[1-9A-HJ-NP-Za-km-z]{44}")
-_COB = re.compile(r"\b[0-9a-f]{40}\b")
+_ISSUE_ID = re.compile(r"(?m)^[^\n]*\bIssue\s+([0-9a-f]{40})\b")
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _NOT_INSTALLED = "rad is not installed"
 _NOT_RUNNING = "the Radicle node is not running"
@@ -316,10 +316,12 @@ def _work_ready(home: Path, rid: str) -> ForgeResult | None:
 
 
 def _cob_from(result: subprocess.CompletedProcess[str]) -> str:
-    found = _COB.findall(_plain((result.stdout or "") + "\n" + (result.stderr or "")))
-    if not found:
+    """The issue id rad labels as Issue, not a hash later in the description."""
+    plain = _plain((result.stdout or "") + "\n" + (result.stderr or ""))
+    match = _ISSUE_ID.search(plain)
+    if match is None:
         return ""
-    return found[-1]
+    return match.group(1)
 
 
 def create_issue(home: Path, raw: str, title: str, body: str) -> ForgeResult:
