@@ -1112,6 +1112,34 @@ def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     assert state["loop"]["status"] == "running"
 
 
+def test_corrupt_plan_entry_does_not_skip_the_spending_stop(tmp_path: Path, monkeypatch) -> None:
+    from fossah.config import state_path
+    from fossah.home import write_json
+    from fossah.trust import decision, remember
+
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["spending_limit_tokens"] = 0
+    config["estimate_tokens_per_cycle"] = 100
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    remember(home, [decision("link", "https://github.com/pallets/click", True, "https git repository URL")])
+    write_json(
+        state_path(home),
+        {"plans": ["no", {"pushed": "yes", "contributed": True}], "ledger": {"estimated_tokens": 0, "metered_tokens": 0}},
+    )
+    assert "accepted link https://github.com/pallets/click" in render_text(home)
+    state = tick(home)
+    assert all(isinstance(plan, dict) for plan in state["plans"])
+    assert state["contributions_pushed"] == 0
+    assert state["loop"]["status"] == "stopped"
+    assert state["loop"]["reason"] == "spending limit reached"
+    assert not invoked.exists()
+    assert "accepted link https://github.com/pallets/click" in render_text(home)
+
+
 def test_unreadable_ledger_stops_before_a_cycle_and_analytics_keeps_trust(tmp_path: Path, monkeypatch) -> None:
     from fossah.analytics import render_text
     from fossah.config import state_path

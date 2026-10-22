@@ -111,7 +111,7 @@ def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return state
     if isinstance(raw.get("plans"), list):
-        state["plans"] = raw["plans"]
+        state["plans"] = [item for item in raw["plans"] if isinstance(item, dict)]
     ledger = raw.get("ledger")
     if isinstance(ledger, dict):
         estimated = _ledger_count(ledger.get("estimated_tokens", 0))
@@ -510,7 +510,9 @@ def _stamp_node(state: dict[str, Any], status: Any) -> None:
 
 
 def _persist(home: Path, config: dict[str, Any], peers: list[dict[str, Any]], sources: list[dict[str, str]], state: dict[str, Any]) -> dict[str, Any]:
-    state["contributions_pushed"] = sum(1 for plan in state["plans"] if plan.get("pushed"))
+    state["contributions_pushed"] = sum(
+        1 for plan in state["plans"] if isinstance(plan, dict) and plan.get("pushed") is True
+    )
     state["ledger"]["limit_tokens"] = _limit_of(config) or 0
     write_json(state_path(home), state)
     _write_publish(home, config, peers, sources, str(state.get("publish", {}).get("url", "")))
