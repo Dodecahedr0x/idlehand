@@ -16,7 +16,10 @@ from fossah.home import home_lock, read_json, write_json
 
 MAX_DECISIONS = 20
 _USERINFO = re.compile(r"://[^/\s:@]+:[^/\s@]+@")
-_NESTED_CREDENTIAL = re.compile(r"[?&](?:token|password|access_token|auth)=[^&\s#]*", re.IGNORECASE)
+_NESTED_CREDENTIAL = re.compile(
+    r"[?&#](?:token|password|access_token|auth)=[^&\s#]*",
+    re.IGNORECASE,
+)
 
 
 def scrub_secrets(text: str) -> str:

@@ -29,13 +29,23 @@ class FetchResult:
 CREDENTIAL_QUERY_KEYS = frozenset({"token", "password", "access_token", "auth"})
 
 
+def _has_credential_key(text: str) -> bool:
+    keys = {key.lower() for key, _value in urllib.parse.parse_qsl(text, keep_blank_values=True)}
+    return bool(keys & CREDENTIAL_QUERY_KEYS)
+
+
+def _without_credential_keys(text: str) -> str:
+    pairs = urllib.parse.parse_qsl(text, keep_blank_values=True)
+    kept = [(key, value) for key, value in pairs if key.lower() not in CREDENTIAL_QUERY_KEYS]
+    return urllib.parse.urlencode(kept)
+
+
 def embeds_credentials(url: str) -> bool:
-    """True when a URL carries userinfo or a credential query key."""
+    """True when a URL carries userinfo or a credential query or fragment key."""
     parsed = urllib.parse.urlsplit(url.strip())
     if parsed.username or parsed.password:
         return True
-    keys = {key.lower() for key, _value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)}
-    return bool(keys & CREDENTIAL_QUERY_KEYS)
+    return _has_credential_key(parsed.query) or _has_credential_key(parsed.fragment)
 
 
 def redact_clone_url(url: str) -> str:
@@ -46,10 +56,10 @@ def redact_clone_url(url: str) -> str:
         host = f"{host}:{parsed.port}"
     if parsed.username or parsed.password:
         parsed = parsed._replace(netloc=host)
-    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    kept = [(key, value) for key, value in query if key.lower() not in CREDENTIAL_QUERY_KEYS]
-    if len(kept) != len(query):
-        parsed = parsed._replace(query=urllib.parse.urlencode(kept))
+    if _has_credential_key(parsed.query):
+        parsed = parsed._replace(query=_without_credential_keys(parsed.query))
+    if _has_credential_key(parsed.fragment):
+        parsed = parsed._replace(fragment=_without_credential_keys(parsed.fragment))
     return urllib.parse.urlunsplit(parsed)
 
 

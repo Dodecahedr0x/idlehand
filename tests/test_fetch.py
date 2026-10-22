@@ -2,7 +2,7 @@ import os
 import stat
 from pathlib import Path
 
-from fossah.fetch import classify_clone_url, clone_repository, git_env
+from fossah.fetch import classify_clone_url, clone_repository, git_env, redact_clone_url
 
 
 def test_classify_refuses_ssh_and_embedded_credentials() -> None:
@@ -21,6 +21,17 @@ def test_classify_refuses_ssh_and_embedded_credentials() -> None:
         allowed, reason = classify_clone_url(url)
         assert allowed is None
         assert snippet in reason
+
+
+def test_fragment_credentials_are_refused_and_redacted() -> None:
+    refused = classify_clone_url("https://github.com/org/repo.git#access_token=sekret")
+    assert refused == (None, "repository URL embeds credentials")
+    shown = redact_clone_url("https://github.com/org/repo.git#access_token=sekret")
+    assert "sekret" not in shown
+    assert shown == "https://github.com/org/repo.git"
+    kept, _reason = classify_clone_url("https://github.com/org/repo.git#readme")
+    assert kept == "https://github.com/org/repo.git#readme"
+    assert redact_clone_url("https://github.com/org/repo.git#readme") == "https://github.com/org/repo.git#readme"
 
 
 def test_redact_clone_url_strips_userinfo_and_token_query() -> None:

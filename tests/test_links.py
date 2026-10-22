@@ -253,6 +253,8 @@ def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> Non
         apply_link(home, "fossah://add?repo=https://example.com?token=sekret")
     with pytest.raises(LinkError, match="credentials"):
         apply_link(home, "fossah://add?list=http://127.0.0.1:9/repos.txt?token=sekret")
+    with pytest.raises(LinkError, match="credentials"):
+        apply_link(home, "fossah://add?repo=https://github.com/org/repo.git%23access_token=sekret")
     listing = tmp_path / "repos.txt"
     listing.write_text(
         "https://github.com/pallets/flask\n"
