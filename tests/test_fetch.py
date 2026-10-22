@@ -433,3 +433,15 @@ def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
     allowed, reason = classify_clone_url("https://github.com/org/my%2Drepo")
     assert allowed == "https://github.com/org/my%2Drepo"
     assert reason == "public clone"
+
+
+def test_percent_encoded_line_break_is_not_a_public_clone() -> None:
+    from idlehand.fetch import classify_clone_url, public_url
+
+    url = "https://github.com/org/repo%0A--upload-pack=touch"
+    allowed, reason = classify_clone_url(url)
+    assert allowed is None
+    assert reason == "repository URL is empty"
+    assert "upload-pack" not in reason
+    assert public_url(url) == ""
+    assert public_url("https://github.com/org/repo%250A--upload-pack=touch") == ""

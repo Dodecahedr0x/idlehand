@@ -337,6 +337,23 @@ def test_repeatedly_encoded_token_in_a_list_file_is_not_stored(tmp_path: Path) -
     assert "credentials" in blob
 
 
+def test_percent_encoded_newline_in_a_link_repo_is_not_stored(tmp_path: Path) -> None:
+    from idlehand.analytics import render_text
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    added = apply_link(
+        home,
+        "idlehand://add?repo=https://github.com/org/repo%250A--upload-pack=touch&repo=https://github.com/pallets/jinja",
+    )
+    assert added == ["https://github.com/pallets/jinja"]
+    blob = (home / "trust.json").read_text(encoding="utf-8")
+    blob += (home / "sources.toml").read_text(encoding="utf-8")
+    blob += render_text(home)
+    assert "upload-pack" not in blob
+    assert "refused link" in blob
+
+
 def test_former_link_scheme_is_refused(tmp_path: Path) -> None:
     from idlehand.analytics import render_text
 

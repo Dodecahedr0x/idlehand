@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from idlehand.fetch import scrub_secrets
+from idlehand.fetch import contains_control_break, scrub_secrets
 from idlehand.home import home_lock, read_json, write_json
 
 MAX_DECISIONS = 20
@@ -26,7 +26,7 @@ def trust_path(home: Path) -> Path:
 
 def public_subject(url: str) -> str:
     """A subject safe to store and show. Secrets and huge lines are not kept."""
-    if any(character in url for character in "\r\n\x00"):
+    if contains_control_break(url):
         return "list entry"
     text = scrub_secrets(url).replace("\n", " ").replace("\r", " ").strip()
     if not text or "PRIVATE KEY" in text or len(text) > 500 or "://" not in text:

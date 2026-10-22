@@ -204,6 +204,23 @@ def test_peer_url_with_a_newline_is_refused() -> None:
     assert "sekret" not in json.dumps(decisions)
 
 
+def test_percent_encoded_newline_in_a_peer_url_is_refused() -> None:
+    url = "https://peer.example/idlehand/publish%0A--upload-pack=touch"
+    allowed, reason = explain_peer_url(url, HEURISTIC)
+    assert allowed is False
+    assert reason == "peer URLs cannot contain a newline"
+    chosen, decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents={"https://direct.example/p": {"peers": [url]}},
+        existing_urls=set(),
+        heuristic=HEURISTIC,
+    )
+    assert chosen == []
+    assert "upload-pack" not in json.dumps(decisions)
+
+
 def test_ipv6_loopback_keeps_its_brackets() -> None:
     assert normalize_peer_url("https://[::1]/idlehand/publish") == "https://[::1]/idlehand/publish"
     assert normalize_peer_url("https://[::1]:47321/idlehand/publish/") == "https://[::1]:47321/idlehand/publish"

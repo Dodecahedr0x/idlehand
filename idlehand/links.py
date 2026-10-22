@@ -15,7 +15,7 @@ from pathlib import Path
 
 from idlehand import __version__
 from idlehand.config import load_sources, save_sources
-from idlehand.fetch import embeds_credentials, public_url
+from idlehand.fetch import contains_control_break, embeds_credentials, public_url
 from idlehand.home import home_lock
 from idlehand.trust import decision, remember
 
@@ -148,7 +148,7 @@ def _with_url(problem: str, url: str) -> str:
 
 
 def _control_characters(url: str) -> bool:
-    return any(character in url for character in "\r\n\x00")
+    return contains_control_break(url)
 
 
 def _validate_repo_url(url: str) -> str:

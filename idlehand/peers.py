@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from idlehand.config import load_peers, save_peers
-from idlehand.fetch import embeds_credentials, public_url
+from idlehand.fetch import contains_control_break, embeds_credentials, public_url
 from idlehand.home import home_lock
 from idlehand.links import LinkError, fetch_text
 from idlehand.trust import decision, public_subject
@@ -38,7 +38,7 @@ class PeerCandidate:
 
 def normalize_peer_url(url: str) -> str:
     raw = url.strip()
-    if any(character in raw for character in "\r\n\x00"):
+    if contains_control_break(raw):
         raise ValueError("peer URLs cannot contain a newline")
     parsed = urllib.parse.urlsplit(raw)
     if embeds_credentials(raw):

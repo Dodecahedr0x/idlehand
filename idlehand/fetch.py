@@ -57,6 +57,14 @@ def _percent_decoded(text: str) -> str:
     return current
 
 
+def contains_control_break(text: str) -> bool:
+    """True when the text or its percent-decoded form contains a line break or NUL."""
+    for form in {text, _percent_decoded(text)}:
+        if any(character in form for character in "\r\n\x00"):
+            return True
+    return False
+
+
 def embeds_credentials(url: str) -> bool:
     """True when a URL carries userinfo or a credential query or fragment key."""
     for form in {url.strip(), _percent_decoded(url.strip())}:
@@ -115,8 +123,11 @@ def scrub_secrets(text: str) -> str:
 
 def public_url(url: str) -> str:
     """A URL safe to store on a plan or in a published document."""
-    text = scrub_secrets(str(url)).replace("\n", " ").replace("\r", " ").strip()
-    if not text or "PRIVATE KEY" in text or len(text) > 500:
+    raw = str(url)
+    if contains_control_break(raw):
+        return ""
+    text = scrub_secrets(raw).replace("\n", " ").replace("\r", " ").strip()
+    if not text or "PRIVATE KEY" in text or len(text) > 500 or contains_control_break(text):
         return ""
     return text
 
@@ -124,7 +135,7 @@ def public_url(url: str) -> str:
 def classify_clone_url(url: str) -> tuple[str | None, str]:
     """Return the URL git may clone, and the reason it is or is not allowed."""
     raw = url.strip()
-    if not raw or any(character in raw for character in "\r\n\x00"):
+    if not raw or contains_control_break(raw):
         return None, "repository URL is empty"
     if raw.startswith("git@") or raw.startswith("ssh://"):
         return None, "public clones do not use SSH keys"
