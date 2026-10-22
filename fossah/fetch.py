@@ -108,6 +108,14 @@ def scrub_secrets(text: str) -> str:
     return "\n".join(_scrub_line(line) for line in text.splitlines())
 
 
+def public_url(url: str) -> str:
+    """A URL safe to store on a plan or in a published document."""
+    text = scrub_secrets(str(url)).replace("\n", " ").replace("\r", " ").strip()
+    if not text or "PRIVATE KEY" in text or len(text) > 500:
+        return ""
+    return text
+
+
 def classify_clone_url(url: str) -> tuple[str | None, str]:
     """Return the URL git may clone, and the reason it is or is not allowed."""
     raw = url.strip()

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fossah.config import load_peers, save_peers
-from fossah.fetch import embeds_credentials, redact_clone_url
+from fossah.fetch import embeds_credentials, public_url
 from fossah.home import home_lock
 from fossah.links import LinkError, fetch_text
 from fossah.trust import decision, public_subject
@@ -272,8 +272,12 @@ def publish_document(
         "fossah": 1,
         "node_id": node_id,
         "listen_url": listen_url,
-        "peers": [{"url": redact_clone_url(str(peer["url"])), "id": peer.get("id", "")} for peer in peers],
-        "repos": [{"url": redact_clone_url(str(repo["url"]))} for repo in repos],
+        "peers": [
+            {"url": shown, "id": peer.get("id", "")}
+            for peer in peers
+            if (shown := public_url(str(peer["url"])))
+        ],
+        "repos": [{"url": shown} for repo in repos if (shown := public_url(str(repo["url"])))],
     }
 
 

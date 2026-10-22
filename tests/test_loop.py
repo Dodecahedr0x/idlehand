@@ -1337,6 +1337,53 @@ def test_unreadable_peer_fetch_interval_still_contributes(tmp_path: Path, monkey
     assert "peer.example" in (home / "peers.toml").read_text(encoding="utf-8")
 
 
+def test_non_finite_peer_interval_still_contributes(tmp_path: Path, monkeypatch) -> None:
+    from fossah.loop import _fetch_interval
+
+    assert _fetch_interval(float("nan")) is None
+    assert _fetch_interval(float("inf")) is None
+    assert _fetch_interval(1.5) == 1.5
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["publish"]["peer_fetch_interval_seconds"] = float("nan")
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert state["peers_runtime"]["last_error"] == "peer fetch interval is unreadable"
+
+
+def test_encoded_credential_in_the_source_list_is_not_recorded(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    save_config(home, config)
+    save_sources(home, [{"url": "https://github.com/org/repo.git%3Ftoken%3Dsekret", "note": "encoded"}])
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["upstream_cloned"] is False
+    assert plan["repo"] == "https://github.com/org/repo.git"
+    assert state["ledger"]["estimated_tokens"] == 0
+    blob = json.dumps(state) + (home / "publish.json").read_text(encoding="utf-8")
+    if (home / "node.log").exists():
+        blob += (home / "node.log").read_text(encoding="utf-8")
+    assert "sekret" not in blob
+    assert "token=" not in blob
+
+
 def test_non_integer_peer_counters_do_not_stop_the_cycle(tmp_path: Path, monkeypatch) -> None:
     from fossah.config import state_path
     from fossah.home import write_json

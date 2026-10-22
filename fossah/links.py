@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fossah import __version__
 from fossah.config import load_sources, save_sources
-from fossah.fetch import embeds_credentials, redact_clone_url
+from fossah.fetch import embeds_credentials, public_url
 from fossah.home import home_lock
 from fossah.trust import decision, remember
 
@@ -128,7 +128,7 @@ def _action_label(action: str) -> str:
 
 def _shown_url(url: str) -> str:
     """A URL that may appear in a refusal. Omit lines that are not a URL."""
-    shown = redact_clone_url(url.strip())
+    shown = public_url(url)
     if (
         not shown
         or "PRIVATE KEY" in shown
@@ -201,7 +201,7 @@ def fetch_text(url: str, timeout: float = 10) -> str:
         with opener.open(request, timeout=timeout) as response:
             data = response.read(MAX_LIST_BYTES + 1)
     except urllib.error.URLError as exc:
-        raise LinkError(f"could not fetch {redact_clone_url(url)}: {exc.reason}") from exc
+        raise LinkError(f"could not fetch {public_url(url) or 'list file'}: {exc.reason}") from exc
     if len(data) > MAX_LIST_BYTES:
         raise LinkError("list file is larger than 1MB")
     return _decode_text(data)

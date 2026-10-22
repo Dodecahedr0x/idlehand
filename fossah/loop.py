@@ -8,6 +8,7 @@ is recorded only after that command has actually run.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ from fossah.config import (
     save_peers,
     state_path,
 )
-from fossah.fetch import clone_repository, embeds_credentials, redact_clone_url, scrub_secrets
+from fossah.fetch import clone_repository, embeds_credentials, public_url, scrub_secrets
 from fossah.home import home_lock, read_json, write_json
 from fossah.peers import (
     PeerCandidate,
@@ -97,7 +98,7 @@ def _counter(value: object) -> int:
 
 def _fetch_interval(value: object) -> float | None:
     """Seconds between peer fetches. None means the setting cannot be used."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         return None
     return float(value)
 
@@ -363,7 +364,7 @@ def _prepare_cycle(
         state["loop"]["reason"] = "every contribution action is turned off"
         return None
     repo_url = sources[cycles % len(sources)]["url"]
-    recorded_url = redact_clone_url(repo_url)
+    recorded_url = public_url(repo_url) or "list entry"
     action = actions[cycles % len(actions)]
     status = inspect_subscription(str(config.get("subscription", "")))
     command = None
