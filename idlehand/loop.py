@@ -397,7 +397,10 @@ def _prepare_cycle(
     configured_runtime = str(config["sandbox"]["runtime"])
     runtime = detect_runtime(configured_runtime)
     refusal = ""
-    if not config["sandbox"].get("execute", True):
+    execute = _rule_flag(config.get("sandbox"), "execute", True)
+    if execute is None:
+        refusal = "sandbox execution is unreadable"
+    elif not execute:
         refusal = "sandbox execution is off"
     elif runtime is None:
         refusal = "no sandbox runtime is available; refused to run on the host"
