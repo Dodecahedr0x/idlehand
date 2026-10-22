@@ -39,7 +39,7 @@ fossah analytics
 fossah stop
 ```
 
-Demo plans are labeled demo. A demo cycle can clone a repository and run the sandboxed command, and it still does not record a contribution. Token totals in this slice are local estimates, not usage reported by a provider.
+Demo plans are labeled demo. A demo cycle can clone a repository and run the sandboxed command, and it still does not record a contribution. It also does not invoke the subscription CLI. When Claude reports token usage, analytics shows that reported total. When it does not, the total is labeled as a local estimate. Codex and Cursor are not invoked.
 
 ## Defaults
 
@@ -123,7 +123,8 @@ Real:
 - config for the subscription, source list, rules, spending limit, and peers
 - one clone per cycle from the local source list, then test, audit, issue, and pull request commands in the sandbox
 - a contribution recorded only after that sandboxed command has run
-- local token estimate that stops the loop at the limit
+- a 10,000 token limit that stops the loop before the next cycle's estimate would pass it
+- Claude usage metered when that CLI reports it, otherwise a labeled local estimate
 - `fossah analytics`
 - the loop starting after a subscription CLI is connected
 - `fossah:` links, including a direct fetch of a publisher list file
@@ -133,9 +134,9 @@ Real:
 
 Not done in this slice:
 
-- Claude, Codex, and Cursor are not invoked. The command is shown and not run, so no provider tokens are metered.
+- Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
 - Issue and pull request drafts stay in the workspace. Nothing is pushed. `contributions pushed` stays at 0.
-- Token totals are a local estimate. Demo output is not a contribution.
+- Demo output is not a contribution.
 
 ## Tests
 

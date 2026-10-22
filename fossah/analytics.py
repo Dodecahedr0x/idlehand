@@ -104,7 +104,10 @@ def render_text(home: Path) -> str:
             sandbox = plan.get("sandbox") or {}
             fetch = plan.get("fetch") or {}
             contributed = "yes" if plan.get("contributed") else "no"
-            detail = sandbox.get("reason") or fetch.get("reason") or ""
+            if not plan.get("upstream_cloned") and fetch.get("reason"):
+                detail = fetch.get("reason")
+            else:
+                detail = sandbox.get("reason") or fetch.get("reason") or ""
             cloned = "yes" if plan.get("upstream_cloned") else "no"
             lines.append(
                 f"    {plan.get('action')}{demo} {plan.get('repo')} "

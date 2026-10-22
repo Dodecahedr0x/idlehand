@@ -39,7 +39,7 @@ def test_node_stays_up_after_the_limit(tmp_path: Path, monkeypatch) -> None:
     bin_dir.mkdir()
     invoked = tmp_path / "claude-invoked"
     script = bin_dir / "claude"
-    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\n", encoding="utf-8")
+    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\npwd >> '{invoked}'\n", encoding="utf-8")
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
     monkeypatch.setenv("FOSSAH_HOME", str(home))
@@ -63,11 +63,15 @@ def test_node_stays_up_after_the_limit(tmp_path: Path, monkeypatch) -> None:
         assert state["contributions_pushed"] == 0
         assert [plan["action"] for plan in state["plans"]] == ["test", "audit", "issue", "pull_request"]
         assert all(plan["contributed"] is True for plan in state["plans"])
-        assert all(plan["subscription_executed"] is False for plan in state["plans"])
+        assert all(plan["subscription_executed"] is True for plan in state["plans"])
+        assert all(plan["usage"] == "estimate" for plan in state["plans"])
         assert all(plan["upstream_cloned"] is True for plan in state["plans"])
         assert state["plans"][0]["sandbox"]["ok"] is True
         assert "sk-node-secret" not in json.dumps(state)
-        assert not invoked.exists()
+        recorded = invoked.read_text(encoding="utf-8").splitlines()
+        assert "hit" in recorded
+        assert {Path(line).resolve() for line in recorded if line != "hit"} == {(home / "planner").resolve()}
+        assert str(tmp_path / "sample") not in " ".join(state["plans"][0]["sandbox"]["argv"])
         text = render_text(home)
         assert "contributions recorded: 4" in text
         assert "contributions pushed: 0" in text

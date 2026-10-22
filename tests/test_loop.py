@@ -64,16 +64,29 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     assert state["contributions_pushed"] == 0
     assert all(plan["contributed"] is True for plan in state["plans"])
     assert all(plan["pushed"] is False for plan in state["plans"])
-    assert all(plan["subscription_executed"] is False for plan in state["plans"])
+    assert all(plan["subscription_executed"] is True for plan in state["plans"])
+    assert all(plan["usage"] == "estimate" for plan in state["plans"])
     assert all(plan["upstream_cloned"] is True for plan in state["plans"])
     assert all(plan["sandbox"]["invoked"] is True for plan in state["plans"])
     assert "owned" not in json.dumps(state["plans"])
     assert "sk-anthropic" not in json.dumps(state["plans"])
     pull = state["plans"][-1]
-    assert pull["subscription_command"][1] == "-p"
-    assert "pull request" in pull["subscription_command"][2].lower()
+    command = pull["subscription_command"]
+    assert command[1] == "-p"
+    rendered = " ".join(command)
+    assert "pull request" in rendered
+    assert command[command.index("--tools") + 1] == ""
+    assert "mcp__*" in command
+    assert "*" in command
+    assert "plan" in command
+    assert "dangerously" not in rendered
+    assert str(home / "workspaces") not in rendered
     assert pull["sandbox"]["argv"][0] == "/usr/bin/python3"
     assert str(home) not in " ".join(pull["sandbox"]["argv"])
+    planner_dir = (home / "planner").resolve()
+    recorded = invoked.read_text(encoding="utf-8").splitlines()
+    assert recorded[0::2] == ["hit", "hit", "hit", "hit"]
+    assert {Path(line).resolve() for line in recorded[1::2]} == {planner_dir}
     assert "fossah-action=test" in state["plans"][0]["sandbox"]["stdout"]
     assert "tests_run=1" in state["plans"][0]["sandbox"]["stdout"]
     assert state["plans"][0]["sandbox"]["ok"] is True
@@ -81,7 +94,6 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     assert "fossah-action=pull_request" in pull["sandbox"]["stdout"]
     draft = _workspace(home, url) / ".fossah" / "pr-draft.md"
     assert "not pushed" in draft.read_text(encoding="utf-8")
-    assert not invoked.exists()
     after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path / "sample", text=True).strip()
     assert after == source_head
     stopped = tick(home)
@@ -92,7 +104,7 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     assert "contributions pushed: 0" in text
     assert "nothing was contributed" not in text
     assert "local estimate, not billed usage" in text
-    assert "command (not run):" in text
+    assert "command (ran on the trusted side):" in text
     assert "contributed=yes" in text
 
 
@@ -200,7 +212,7 @@ def test_demo_clone_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
 
 def test_failed_fetch_is_not_a_contribution_and_rotates(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
-    _connect(home, tmp_path, monkeypatch)
+    invoked = _connect(home, tmp_path, monkeypatch)
     config = _ready(home)
     config["subscription"] = "claude"
     config["sandbox"]["execute"] = True
@@ -217,6 +229,7 @@ def test_failed_fetch_is_not_a_contribution_and_rotates(tmp_path: Path, monkeypa
         ],
     )
     first = tick(home)
+    assert not invoked.exists()
     assert first["plans"][0]["contributed"] is False
     assert first["plans"][0]["upstream_cloned"] is False
     assert "credentials" in first["plans"][0]["fetch"]["reason"]
@@ -370,6 +383,280 @@ def test_fetch_exception_is_not_a_contribution(tmp_path: Path, monkeypatch) -> N
     assert state["ledger"]["estimated_tokens"] == 0
     assert state["loop"]["cycles"] == 1
     assert state["node"]["status"] == "up"
+
+
+def _reporter(tmp_path: Path, monkeypatch, stdout: str) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    invoked = tmp_path / "claude-invoked"
+    script = bin_dir / "claude"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"pwd >> '{invoked}'\n"
+        "cat <<'EOF'\n"
+        f"{stdout}\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    return invoked
+
+
+def test_reported_usage_is_metered_without_adding_the_estimate(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    stdout = '{"type":"result","result":"touch /tmp/fossah-do-not-run","usage":{"input_tokens":30,"output_tokens":12}}'
+    invoked = _reporter(tmp_path, monkeypatch, stdout)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["spending_limit_tokens"] = 100
+    config["estimate_tokens_per_cycle"] = 80
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    first = tick(home)
+    assert first["plans"][0]["contributed"] is True
+    assert first["plans"][0]["usage"] == "reported"
+    assert first["plans"][0]["metered_tokens"] == 42
+    assert first["plans"][0]["estimated_tokens"] == 0
+    assert first["ledger"]["metered_tokens"] == 42
+    assert first["ledger"]["estimated_tokens"] == 0
+    assert first["ledger"]["metering"] == "reported"
+    assert first["plans"][0]["subscription_executed"] is True
+    assert Path(invoked.read_text(encoding="utf-8").strip()).resolve() == (home / "planner").resolve()
+    assert "touch /tmp/fossah-do-not-run" not in json.dumps(first["plans"])
+    assert not Path("/tmp/fossah-do-not-run").exists()
+    text = render_text(home)
+    assert "reported by the subscription" in text
+    assert "local estimate, not billed usage" not in text
+    second = tick(home)
+    assert len(second["plans"]) == 1
+    assert second["loop"]["status"] == "stopped"
+    assert invoked.read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_reported_zero_does_not_also_charge_the_estimate(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":0,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["spending_limit_tokens"] = 500
+    config["estimate_tokens_per_cycle"] = 100
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"][0]["usage"] == "reported"
+    assert state["ledger"]["metered_tokens"] == 0
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["ledger"]["metering"] == "reported"
+    assert state["plans"][0]["contributed"] is True
+    assert "reported by the subscription" in render_text(home)
+
+
+def test_overshoot_stops_the_next_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":250,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["spending_limit_tokens"] = 100
+    config["estimate_tokens_per_cycle"] = 100
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    first = tick(home)
+    assert first["ledger"]["metered_tokens"] == 250
+    assert first["loop"]["status"] == "stopped"
+    second = tick(home)
+    assert len(second["plans"]) == 1
+    assert second["ledger"]["metered_tokens"] == 250
+    assert "250 / 100" in render_text(home)
+
+
+def test_mixed_metering_labels_estimate_and_reported(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":15,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 40
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    tick(home)
+    invoked.write_text("", encoding="utf-8")
+    script = tmp_path / "bin" / "claude"
+    script.write_text(f"#!/bin/sh\npwd >> '{invoked}'\n", encoding="utf-8")
+    script.chmod(0o755)
+    second = tick(home)
+    assert second["ledger"]["metered_tokens"] == 15
+    assert second["ledger"]["estimated_tokens"] == 40
+    assert second["ledger"]["metering"] == "mixed"
+    assert second["plans"][0]["usage"] == "reported"
+    assert second["plans"][1]["usage"] == "estimate"
+    assert "40 estimated, 15 reported" in render_text(home)
+
+
+def test_demo_and_other_clis_do_not_run_on_the_host(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    markers = {}
+    for name in ("claude", "codex", "cursor-agent"):
+        marker = tmp_path / f"{name}-hit"
+        markers[name] = marker
+        script = bin_dir / name
+        script.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
+        script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    config = _ready(home)
+    config["demo"] = True
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 25
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    demo = tick(home)
+    assert demo["plans"][0]["demo"] is True
+    assert demo["plans"][0]["contributed"] is False
+    assert demo["plans"][0]["subscription_executed"] is False
+    assert demo["plans"][0]["usage"] == "estimate"
+    assert demo["ledger"]["estimated_tokens"] == 25
+    assert not markers["claude"].exists()
+    config["demo"] = False
+    config["subscription"] = "codex"
+    save_config(home, config)
+    codex = tick(home)
+    assert codex["plans"][1]["subscription_executed"] is False
+    assert codex["plans"][1]["usage"] == "estimate"
+    assert codex["plans"][1]["subscription_command"][1] == "exec"
+    assert not markers["codex"].exists()
+    config["subscription"] = "cursor"
+    save_config(home, config)
+    cursor = tick(home)
+    assert cursor["plans"][2]["subscription_executed"] is False
+    assert cursor["plans"][2]["usage"] == "estimate"
+    assert not markers["cursor-agent"].exists()
+    assert cursor["ledger"]["metering"] == "local-estimate"
+
+
+def test_planner_timeout_keeps_the_estimate(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = tmp_path / "claude-invoked"
+    script = tmp_path / "bin" / "claude"
+    script.parent.mkdir()
+    script.write_text(f"#!/bin/sh\necho started >> '{invoked}'\nsleep 5\necho finished >> '{invoked}'\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{script.parent}:/usr/bin:/bin")
+    monkeypatch.setattr("fossah.usage.PLAN_TIMEOUT", 0.2)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 17
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    text = invoked.read_text(encoding="utf-8")
+    assert "started" in text
+    assert "finished" not in text
+    assert state["plans"][0]["subscription_executed"] is True
+    assert state["plans"][0]["usage"] == "estimate"
+    assert state["ledger"]["estimated_tokens"] == 17
+    assert state["ledger"]["metered_tokens"] == 0
+    assert state["plans"][0]["contributed"] is True
+
+
+def test_reported_tokens_stay_on_the_ledger_when_the_sandbox_fails(tmp_path: Path, monkeypatch) -> None:
+    from fossah.sandbox import SandboxResult
+
+    home = tmp_path / "home"
+    _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":9,"output_tokens":0}}')
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 100
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+
+    def refused(*args, **kwargs):
+        return SandboxResult(
+            runtime="namespace",
+            invoked=False,
+            ok=False,
+            exit_code=97,
+            stdout="",
+            stderr="sandbox setup failed",
+            reason="sandbox setup failed",
+            argv=["/usr/bin/python3"],
+        )
+
+    monkeypatch.setattr("fossah.loop.run", refused)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["usage"] == "reported"
+    assert plan["metered_tokens"] == 9
+    assert state["ledger"]["metered_tokens"] == 9
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["ledger"]["metering"] == "reported"
+    assert state["contributions_pushed"] == 0
+
+
+def test_usage_on_stderr_is_not_treated_as_a_report(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = tmp_path / "claude-invoked"
+    script = tmp_path / "bin" / "claude"
+    script.parent.mkdir()
+    script.write_text(
+        "#!/bin/sh\n"
+        f"echo hit >> '{invoked}'\n"
+        "echo '{\"usage\":{\"input_tokens\":99,\"output_tokens\":1}}' >&2\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{script.parent}:/usr/bin:/bin")
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 11
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"][0]["usage"] == "estimate"
+    assert state["ledger"]["estimated_tokens"] == 11
+    assert state["ledger"]["metered_tokens"] == 0
+    assert "99" not in json.dumps(state["ledger"])
 
 
 def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:

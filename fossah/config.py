@@ -25,7 +25,7 @@ DEFAULT_REPOS = [
 ]
 
 CONFIG_HEADER = """# Fossah node configuration. This file is yours.
-# The spending limit is a local estimate in this slice, not a bill from a provider.
+# The spending limit counts usage the Claude CLI reports. Otherwise it is a local estimate, not a bill from a provider.
 """
 
 SOURCES_HEADER = """# Local discovery list. This file is yours.

@@ -37,6 +37,7 @@ from fossah.peers import (
 )
 from fossah.sandbox import detect_runtime, run
 from fossah.subscriptions import inspect_subscription, subscription_command
+from fossah.usage import claude_argv, plan_with_claude
 
 ACTIONS = (
     ("test", "allow_test"),
@@ -91,6 +92,9 @@ def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(ledger, dict):
         state["ledger"]["estimated_tokens"] = int(ledger.get("estimated_tokens", 0) or 0)
         state["ledger"]["metered_tokens"] = int(ledger.get("metered_tokens", 0) or 0)
+        metering = ledger.get("metering")
+        if metering in {"local-estimate", "reported", "mixed"}:
+            state["ledger"]["metering"] = metering
     loop = raw.get("loop")
     if isinstance(loop, dict):
         state["loop"]["cycles"] = int(loop.get("cycles", 0) or 0)
@@ -109,7 +113,8 @@ def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(peers_runtime, dict):
         state["peers_runtime"].update(peers_runtime)
     state["ledger"]["limit_tokens"] = int(config["spending_limit_tokens"])
-    state["ledger"]["metering"] = "local-estimate"
+    if state["ledger"]["metering"] not in {"local-estimate", "reported", "mixed"}:
+        state["ledger"]["metering"] = "local-estimate"
     return state
 
 
@@ -225,7 +230,10 @@ def _prepare_cycle(
     status = inspect_subscription(str(config.get("subscription", "")))
     command = None
     if status.connected and status.binary:
-        command = subscription_command(status.name, status.binary, recorded_url, action)
+        if status.name == "claude":
+            command = claude_argv(status.binary, recorded_url, action)
+        else:
+            command = subscription_command(status.name, status.binary, recorded_url, action)
     configured_runtime = str(config["sandbox"]["runtime"])
     runtime = detect_runtime(configured_runtime)
     refusal = ""
@@ -245,32 +253,39 @@ def _prepare_cycle(
         "memory": config["sandbox"]["memory"],
         "cpus": config["sandbox"]["cpus"],
         "workspace": _workspace(home, repo_url),
+        "planner_home": home,
+        "plan_cli": status.binary if status.name == "claude" and status.connected and not demo and not refusal else "",
         "refusal": refusal,
+    }
+
+
+def _skipped(runtime: str | None, fetch: dict[str, Any], *, cloned: bool, sandbox: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "fetch": fetch,
+        "sandbox": sandbox or _not_run(runtime, "not run; repository was not fetched"),
+        "cloned": cloned,
+        "planner": None,
     }
 
 
 def _run_job(job: dict[str, Any]) -> dict[str, Any]:
     runtime = job["runtime"] if isinstance(job["runtime"], str) else None
     if job["refusal"]:
-        return {
-            "fetch": {"cloned": False, "reason": "not fetched; sandbox refused"},
-            "sandbox": _not_run(runtime, job["refusal"]),
-            "cloned": False,
-        }
+        return _skipped(
+            runtime,
+            {"cloned": False, "reason": "not fetched; sandbox refused"},
+            cloned=False,
+            sandbox=_not_run(runtime, job["refusal"]),
+        )
     try:
         fetch = clone_repository(str(job["repo_url"]), job["workspace"])
     except Exception as exc:  # noqa: BLE001 — a fetch failure is a skipped cycle
-        return {
-            "fetch": {"cloned": False, "reason": str(exc)[:300]},
-            "sandbox": _not_run(runtime, "not run; repository was not fetched"),
-            "cloned": False,
-        }
+        return _skipped(runtime, {"cloned": False, "reason": str(exc)[:300]}, cloned=False)
     if not fetch.cloned:
-        return {
-            "fetch": fetch.as_dict(),
-            "sandbox": _not_run(runtime, "not run; repository was not fetched"),
-            "cloned": False,
-        }
+        return _skipped(runtime, fetch.as_dict(), cloned=False)
+    planner = None
+    if job.get("plan_cli"):
+        planner = plan_with_claude(str(job["plan_cli"]), str(job["recorded_url"]), str(job["action"]), job["planner_home"])
     try:
         result = run(
             job["workspace"],
@@ -285,8 +300,19 @@ def _run_job(job: dict[str, Any]) -> dict[str, Any]:
             "fetch": fetch.as_dict(),
             "sandbox": _not_run(runtime, str(exc)[:300]),
             "cloned": True,
+            "planner": planner,
         }
-    return {"fetch": fetch.as_dict(), "sandbox": result.as_dict(), "cloned": True}
+    return {"fetch": fetch.as_dict(), "sandbox": result.as_dict(), "cloned": True, "planner": planner}
+
+
+def _apply_usage(state: dict[str, Any], source: str) -> None:
+    estimated = int(state["ledger"]["estimated_tokens"])
+    metered = int(state["ledger"]["metered_tokens"])
+    current = state["ledger"].get("metering") or "local-estimate"
+    if source == "reported":
+        state["ledger"]["metering"] = "mixed" if estimated > 0 or current == "mixed" else "reported"
+    elif source == "estimate":
+        state["ledger"]["metering"] = "mixed" if metered > 0 or current in {"reported", "mixed"} else "local-estimate"
 
 
 def _commit_cycle(
@@ -300,8 +326,28 @@ def _commit_cycle(
     cost = int(config["estimate_tokens_per_cycle"])
     limit = int(config["spending_limit_tokens"])
     sandbox = outcome["sandbox"]
+    planner = outcome.get("planner") if isinstance(outcome.get("planner"), dict) else None
     invoked = bool(sandbox.get("invoked"))
-    charged = cost if invoked else 0
+    reported = planner.get("tokens") if planner else None
+    if isinstance(reported, bool) or not isinstance(reported, int):
+        reported = None
+    executed = bool(planner and planner.get("executed"))
+    usage = "none"
+    charged_estimate = 0
+    charged_metered = 0
+    if reported is not None:
+        usage = "reported"
+        charged_metered = reported
+    elif invoked:
+        usage = "estimate"
+        charged_estimate = cost
+    if charged_estimate:
+        state["ledger"]["estimated_tokens"] = int(state["ledger"]["estimated_tokens"]) + charged_estimate
+    if reported is not None:
+        state["ledger"]["metered_tokens"] = int(state["ledger"]["metered_tokens"]) + charged_metered
+    if usage != "none":
+        _apply_usage(state, usage)
+    command = planner.get("argv") if planner and planner.get("argv") else job["command"]
     plan = {
         "id": cycles + 1,
         "at": now_iso(),
@@ -311,14 +357,14 @@ def _commit_cycle(
         "contributed": bool(invoked and not job["demo"]),
         "pushed": False,
         "upstream_cloned": bool(outcome["cloned"]),
-        "estimated_tokens": charged,
-        "subscription_command": job["command"],
-        "subscription_executed": False,
+        "estimated_tokens": charged_estimate,
+        "metered_tokens": charged_metered,
+        "usage": usage,
+        "subscription_command": command,
+        "subscription_executed": executed,
         "fetch": outcome["fetch"],
         "sandbox": sandbox,
     }
-    if invoked:
-        state["ledger"]["estimated_tokens"] = int(state["ledger"]["estimated_tokens"]) + cost
     spent = int(state["ledger"]["estimated_tokens"]) + int(state["ledger"]["metered_tokens"])
     state["plans"] = [*state["plans"], plan][-30:]
     state["loop"]["cycles"] = cycles + 1
@@ -342,7 +388,7 @@ def _commit_cycle(
         home,
         f"{plan['at']} {plan['action']} {plan['repo']} "
         f"cloned={str(plan['upstream_cloned']).lower()} contributed={mark} "
-        f"estimated {spent}/{limit} {sandbox.get('reason', '')}",
+        f"usage={usage} {spent}/{limit} {sandbox.get('reason', '')}",
     )
 
 

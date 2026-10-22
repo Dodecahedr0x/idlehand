@@ -1,7 +1,8 @@
 """Detect subscription CLIs and build the command that would run.
 
-The command is recorded for the user. This slice does not execute it.
-The subscription CLI stays on the trusted side of the node, outside the sandbox.
+Codex and Cursor commands are recorded and not executed. Those CLIs run
+repository commands on the host. The Claude planner lives in fossah.usage
+and is the only subscription command Fossah invokes.
 """
 
 from __future__ import annotations
