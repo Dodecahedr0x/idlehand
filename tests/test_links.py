@@ -293,3 +293,24 @@ def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> Non
     assert "PRIVATE KEY" not in blob
     assert "sekret" not in blob
     assert "https://github.com/pallets/click" in before
+
+
+def test_encoded_link_text_is_not_stored(tmp_path: Path) -> None:
+    from fossah.analytics import render_text
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    with pytest.raises(LinkError, match="unsupported Fossah link action$"):
+        apply_link(home, "fossah://password=sekret")
+    with pytest.raises(LinkError, match="unsupported Fossah link action$"):
+        apply_link(home, "fossah://BEGIN%20OPENSSH%20PRIVATE%20KEY")
+    with pytest.raises(LinkError, match="credentials"):
+        apply_link(home, "fossah://add?repo=https://github.com/org/repo.git%3Ftoken%3Dsekret")
+    added = apply_link(home, "fossah://add?repo=https://github.com/org/my%2Drepo")
+    assert added == ["https://github.com/org/my-repo"]
+    blob = (home / "trust.json").read_text(encoding="utf-8") + (home / "sources.toml").read_text(encoding="utf-8")
+    blob += render_text(home)
+    assert "sekret" not in blob
+    assert "PRIVATE KEY" not in blob
+    assert "BEGIN" not in blob
+    assert "unsupported Fossah link action" in blob

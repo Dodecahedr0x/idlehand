@@ -316,7 +316,7 @@ def test_unsupported_peer_scheme_does_not_keep_the_raw_url(tmp_path) -> None:
     from fossah.config import ensure_home, save_config, save_peers
     from fossah.loop import tick
 
-    assert explain_peer_url("password=sekret", HEURISTIC) == (False, "unsupported peer URL scheme")
+    assert explain_peer_url("password=sekret", HEURISTIC) == (False, "peer URLs cannot embed credentials")
     assert explain_peer_url("ssh://git.example/org/repo", HEURISTIC) == (False, "unsupported peer URL scheme: ssh")
     home = tmp_path / "home"
     config = ensure_home(home)

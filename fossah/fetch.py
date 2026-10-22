@@ -41,12 +41,28 @@ def _without_credential_keys(text: str) -> str:
     return urllib.parse.urlencode(kept)
 
 
+def _percent_decoded(text: str, rounds: int = 3) -> str:
+    """Decode percent-encoding a few times. A credential is still a credential when encoded."""
+    current = text
+    for _ in range(rounds):
+        decoded = urllib.parse.unquote(current)
+        if decoded == current:
+            break
+        current = decoded
+    return current
+
+
 def embeds_credentials(url: str) -> bool:
     """True when a URL carries userinfo or a credential query or fragment key."""
-    parsed = urllib.parse.urlsplit(url.strip())
-    if parsed.username or parsed.password:
-        return True
-    return _has_credential_key(parsed.query) or _has_credential_key(parsed.fragment)
+    for form in {url.strip(), _percent_decoded(url.strip())}:
+        parsed = urllib.parse.urlsplit(form)
+        if parsed.username or parsed.password:
+            return True
+        if _has_credential_key(parsed.query) or _has_credential_key(parsed.fragment):
+            return True
+        if _ASSIGNED_CREDENTIAL.search(form):
+            return True
+    return False
 
 
 def redact_clone_url(url: str) -> str:
@@ -71,10 +87,18 @@ _NESTED_CREDENTIAL = re.compile(
     r"[?&#](?:token|password|access_token|auth)=[^&\s#]*",
     re.IGNORECASE,
 )
+_ASSIGNED_CREDENTIAL = re.compile(
+    r"(?:token|password|access_token|auth)=[^/\s?#&]*",
+    re.IGNORECASE,
+)
 
 
 def _scrub_line(line: str) -> str:
-    cleaned = _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(line)))
+    decoded = _percent_decoded(line)
+    cleaned = _ASSIGNED_CREDENTIAL.sub(
+        "",
+        _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(decoded))),
+    )
     cleaned = re.sub(r"\?&+", "?", cleaned)
     return re.sub(r"[?&]+$", "", cleaned)
 

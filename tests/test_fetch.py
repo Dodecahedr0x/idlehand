@@ -398,3 +398,26 @@ def test_local_clone_and_non_repo(tmp_path: Path) -> None:
     missed = clone_repository(plain.resolve().as_uri(), tmp_path / "workspaces" / "plain")
     assert missed.cloned is False
     assert not (tmp_path / "workspaces" / "plain").exists()
+
+
+def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
+    from fossah.fetch import classify_clone_url, embeds_credentials, scrub_secrets
+
+    encoded = [
+        "https://github.com/org/repo.git%3Ftoken%3Dsekret",
+        "https://github.com/org/repo.git?token%3Dsekret",
+        "https://user%3Asekret%40github.com/org/repo",
+        "https://github.com/org/repo.git%253Ftoken%253Dsekret",
+        "https://example.com/password=sekret",
+    ]
+    for url in encoded:
+        assert embeds_credentials(url)
+        allowed, reason = classify_clone_url(url)
+        assert allowed is None
+        assert reason == "repository URL embeds credentials"
+        assert "sekret" not in reason
+        assert "sekret" not in scrub_secrets(url)
+    assert scrub_secrets("https://github.com/org/repo.git%3Ftoken%3Dsekret\nfiles=1") == "https://github.com/org/repo.git\nfiles=1"
+    allowed, reason = classify_clone_url("https://github.com/org/my%2Drepo")
+    assert allowed == "https://github.com/org/my%2Drepo"
+    assert reason == "public clone"

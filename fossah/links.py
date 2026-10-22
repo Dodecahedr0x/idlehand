@@ -47,7 +47,7 @@ def parse_fossah_link(url: str) -> ParsedLink:
             raise LinkError("Fossah does not resolve links through a catalog")
     action = (parsed.netloc or parsed.path.lstrip("/")).split("/")[0]
     if action not in {"", "add"}:
-        raise LinkError(f"unsupported Fossah link action: {action}")
+        raise LinkError(f"unsupported Fossah link action{_action_label(action)}")
     repos: list[str] = []
     for value in query.get("repo", []):
         repos.extend(_split_repo_field(value))
@@ -112,6 +112,18 @@ def judge_list_text(text: str) -> list[tuple[bool, str, str]]:
             continue
         judged.append(judge_repo_url(line))
     return judged
+
+
+def _action_label(action: str) -> str:
+    """A short action name safe to show. Anything else is omitted."""
+    if (
+        action
+        and len(action) <= 32
+        and action[0].isalpha()
+        and all(character.isalnum() or character in "+.-" for character in action)
+    ):
+        return f": {action}"
+    return ""
 
 
 def _shown_url(url: str) -> str:
