@@ -231,6 +231,8 @@ def _from_process(runtime: str, argv: list[str], completed: subprocess.Completed
 
 
 def run_namespace(workspace: Path, command: list[str], timeout: float = 30) -> SandboxResult:
+    if workspace.is_symlink():
+        return _refused("namespace", "refusing to follow a workspace symlink", command)
     try:
         mapped = prepare_host_command(command, workspace)
     except SandboxError as exc:
@@ -310,6 +312,8 @@ def run(
     chosen = detect_runtime(runtime)
     if chosen is None:
         return _refused(runtime, "no sandbox runtime is available; refused to run on the host", command)
+    if workspace.is_symlink() or workspace.parent.is_symlink():
+        return _refused(runtime, "refusing to follow a workspace symlink", command)
     workspace.mkdir(parents=True, exist_ok=True)
     if chosen == "namespace":
         return run_namespace(workspace, command, timeout=timeout)

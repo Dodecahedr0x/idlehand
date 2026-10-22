@@ -162,6 +162,8 @@ def _remount_readonly(path: Path) -> None:
 
 def enter_and_exec(workspace: Path, command: list[str]) -> None:
     """Replace this process with command inside the jail. Does not return on success."""
+    if workspace.is_symlink():
+        raise JailError("refusing to follow a workspace symlink")
     workspace = workspace.resolve()
     if not workspace.is_dir():
         raise JailError(f"workspace does not exist: {workspace}")

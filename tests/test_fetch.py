@@ -174,9 +174,37 @@ def test_symlink_workspace_is_not_replaced(tmp_path: Path) -> None:
         git_executable=str(git),
     )
     assert result.cloned is False
-    assert "outside" in result.reason
+    assert "symlink" in result.reason
     assert not called.exists()
     assert (outside / "keep").read_text(encoding="utf-8") == "safe"
+    parent = tmp_path / "linked-parent"
+    parent.symlink_to(outside)
+    parent_result = clone_repository(
+        "https://github.com/org/repo.git",
+        parent / "slug",
+        git_executable=str(git),
+    )
+    assert parent_result.cloned is False
+    assert "symlink" in parent_result.reason
+    assert not called.exists()
+    assert not (outside / "slug").exists()
+
+
+def test_replacing_a_workspace_does_not_delete_through_an_internal_symlink(tmp_path: Path) -> None:
+    from tests.support import SAMPLE_FILES, make_repo
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    workspace = tmp_path / "workspaces" / "sample"
+    workspace.mkdir(parents=True)
+    (workspace / "leak").symlink_to(outside)
+    result = clone_repository(make_repo(tmp_path / "repo", SAMPLE_FILES), workspace)
+    assert result.cloned is True
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert outside.is_dir()
+    assert not (outside / ".git").exists()
 
 
 def test_successful_exit_without_git_dir_is_not_a_clone(tmp_path: Path) -> None:

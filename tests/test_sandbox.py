@@ -51,6 +51,23 @@ print("fossah-sandbox-ok")
     assert secret.read_text(encoding="utf-8") == "topsecret"
 
 
+def test_symlink_workspace_is_not_mounted(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    link = tmp_path / "work"
+    link.symlink_to(outside)
+    result = run(
+        link,
+        ["/usr/bin/python3", "-c", "open('/work/keep.txt','w').write('changed')"],
+        runtime="namespace",
+    )
+    assert result.invoked is False
+    assert "symlink" in result.reason
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
 def test_missing_workspace_does_not_run_on_the_host(tmp_path: Path) -> None:
     sentinel = tmp_path / "sentinel"
     result = run(

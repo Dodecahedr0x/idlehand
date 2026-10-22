@@ -111,14 +111,14 @@ def git_env(empty_home: Path) -> dict[str, str]:
 
 
 def _clear_workspace(workspace: Path) -> str | None:
+    if workspace.is_symlink() or workspace.parent.is_symlink():
+        return "refusing to follow a workspace symlink"
     root = workspace.parent.resolve()
     if workspace.exists():
         resolved = workspace.resolve()
         if not resolved.is_relative_to(root):
             return "refusing to replace a workspace outside its parent"
         shutil.rmtree(resolved)
-    elif workspace.is_symlink():
-        return "refusing to follow a workspace symlink"
     return None
 
 
