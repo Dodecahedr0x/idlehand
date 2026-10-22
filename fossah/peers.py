@@ -59,6 +59,12 @@ def _scheme_of(url: str) -> str:
     return urllib.parse.urlsplit(url).scheme.lower()
 
 
+def _heuristic_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def explain_peer_url(url: str, heuristic: dict[str, Any]) -> tuple[bool, str]:
     """Whether a second-degree peer URL may be stored, and the reason."""
     try:
@@ -105,9 +111,11 @@ def review_second_degree(
 
     Repository lists on those documents are ignored here.
     """
-    min_endorsements = int(heuristic.get("min_endorsements", 1))
-    max_new = int(heuristic.get("max_new_peers_per_cycle", 5))
-    max_peers = int(heuristic.get("max_peers", 50))
+    min_endorsements = _heuristic_count(heuristic.get("min_endorsements", 1))
+    max_new = _heuristic_count(heuristic.get("max_new_peers_per_cycle", 5))
+    max_peers = _heuristic_count(heuristic.get("max_peers", 50))
+    if min_endorsements is None or max_new is None or max_peers is None:
+        return [], [decision("peer", "fossah://peer-heuristic", False, "peer heuristic is unreadable")]
     room = max(0, max_peers - len(existing_urls))
     limit = min(max_new, room)
     direct_urls: set[str] = set()

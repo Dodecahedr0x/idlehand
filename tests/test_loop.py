@@ -306,6 +306,34 @@ def test_non_utf8_peer_document_does_not_crash_or_leak(tmp_path: Path) -> None:
     assert state["plans"] == []
 
 
+def test_unreadable_peer_heuristic_does_not_skip_the_cycle(tmp_path: Path, monkeypatch) -> None:
+    from fossah.trust import load_trust
+
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["peer_heuristic"]["min_endorsements"] = "no"
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    peer = tmp_path / "peer.json"
+    peer.write_text('{"peers":["https://second.example/fossah/publish"],"repos":[]}\n', encoding="utf-8")
+    save_peers(home, [{"url": peer.as_uri(), "id": "", "source": "user", "endorsements": 1}])
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert any(
+        item["reason"] == "peer heuristic is unreadable" and item["accepted"] is False for item in load_trust(home)
+    )
+    assert "peer heuristic is unreadable" in render_text(home)
+    assert "https://second.example/fossah/publish" not in (home / "peers.toml").read_text(encoding="utf-8")
+
+
 def test_credential_peer_url_is_not_fetched_or_published(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _ready(home)
