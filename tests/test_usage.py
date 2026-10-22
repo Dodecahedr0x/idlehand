@@ -70,6 +70,13 @@ def test_planner_does_not_leave_a_file_behind(tmp_path: Path) -> None:
     assert "sk-left-behind" not in leftover
 
 
+def test_huge_or_deep_usage_is_not_a_report() -> None:
+    assert parse_reported_tokens("x" * 1_000_001) is None
+    nested = '{"a":' * 2000 + "1" + "}" * 2000
+    assert parse_reported_tokens(nested) is None
+    assert parse_reported_tokens('{"type":"result","usage":{"input_tokens":3,"output_tokens":1}}') == 4
+
+
 def test_total_tokens_is_only_a_fallback() -> None:
     assert parse_reported_tokens('{"usage":{"input_tokens":2,"output_tokens":2,"total_tokens":99}}') == 4
     assert parse_reported_tokens('{"usage":{"total_tokens":9}}') == 9

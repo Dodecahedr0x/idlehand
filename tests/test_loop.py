@@ -151,6 +151,26 @@ def test_non_positive_estimate_does_not_start_a_cycle(tmp_path: Path, monkeypatc
     assert not (home / "workspaces").exists() or not any((home / "workspaces").iterdir())
 
 
+def test_bad_peer_clock_does_not_skip_the_spending_stop(tmp_path: Path, monkeypatch) -> None:
+    from fossah.config import state_path
+    from fossah.home import write_json
+
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["spending_limit_tokens"] = 0
+    config["estimate_tokens_per_cycle"] = 100
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    write_json(state_path(home), {"peers_runtime": {"last_fetch_epoch": "no"}, "plans": []})
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["status"] == "stopped"
+    assert state["loop"]["reason"] == "spending limit reached"
+    assert not invoked.exists()
+
+
 def test_zero_limit_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     invoked = _connect(home, tmp_path, monkeypatch)

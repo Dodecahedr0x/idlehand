@@ -100,29 +100,35 @@ def parse_reported_tokens(text: str) -> int | None:
     """Return reported tokens, or None when the CLI did not report usage.
 
     Zero is a real report. The last result usage wins so a JSONL transcript
-    is not added up twice.
+    is not added up twice. A huge or deeply nested document is not a report.
     """
     raw = text.strip()
-    if not raw:
+    if not raw or len(raw) > 1_000_000:
         return None
     documents: list[object] = []
     try:
-        documents.append(json.loads(raw))
-    except json.JSONDecodeError:
-        for line in raw.splitlines():
-            piece = line.strip()
-            if not piece:
-                continue
-            try:
-                documents.append(json.loads(piece))
-            except json.JSONDecodeError:
-                continue
+        try:
+            documents.append(json.loads(raw))
+        except json.JSONDecodeError:
+            for line in raw.splitlines():
+                piece = line.strip()
+                if not piece:
+                    continue
+                try:
+                    documents.append(json.loads(piece))
+                except json.JSONDecodeError:
+                    continue
+    except RecursionError:
+        return None
     result_totals: list[int] = []
     other_totals: list[int] = []
-    for document in documents:
-        found, other = _collect(document)
-        result_totals.extend(found)
-        other_totals.extend(other)
+    try:
+        for document in documents:
+            found, other = _collect(document)
+            result_totals.extend(found)
+            other_totals.extend(other)
+    except RecursionError:
+        return None
     if result_totals:
         return result_totals[-1]
     if other_totals:

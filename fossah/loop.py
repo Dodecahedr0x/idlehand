@@ -509,7 +509,8 @@ def tick(home: Path) -> dict[str, Any]:
         state = load_state(home, config)
         listen_url = str(state.get("publish", {}).get("url", ""))
     interval = float(config["publish"]["peer_fetch_interval_seconds"])
-    last = float(state["peers_runtime"].get("last_fetch_epoch") or 0)
+    raw_last = state["peers_runtime"].get("last_fetch_epoch") or 0
+    last = float(raw_last) if isinstance(raw_last, (int, float)) and not isinstance(raw_last, bool) else 0.0
     additions: list[PeerCandidate] = []
     ignored = 0
     errors: list[str] = []
