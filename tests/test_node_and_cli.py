@@ -160,6 +160,27 @@ def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -
     assert alive_pid(home) is None
 
 
+def test_bad_publish_port_does_not_exit_the_node(tmp_path: Path, monkeypatch) -> None:
+    from idlehand.node import _listen_address
+
+    assert _listen_address({"publish": {"host": "127.0.0.1", "port": "no", "listen": True}})[1] == 47321
+    assert _listen_address({"publish": {"port": 0}})[1] == 0
+    home = tmp_path / "home"
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
+    _configure(home)
+    config = load_config(home)
+    config["publish"]["port"] = "no"
+    save_config(home, config)
+    pid = start_node(home)
+    try:
+        assert alive_pid(home) == pid
+        state = read_json(state_path(home)) or {}
+        assert state["node"]["status"] == "up"
+    finally:
+        stop_node(home)
+
+
 def test_non_finite_loop_interval_does_not_spin(tmp_path: Path, monkeypatch) -> None:
     from idlehand.node import _loop_interval
 

@@ -9,7 +9,16 @@ import threading
 import time
 from pathlib import Path
 
-from idlehand.config import ensure_home, load_config, load_peers, load_sources, pid_path, publish_path, state_path
+from idlehand.config import (
+    DEFAULT_LISTEN_PORT,
+    ensure_home,
+    load_config,
+    load_peers,
+    load_sources,
+    pid_path,
+    publish_path,
+    state_path,
+)
 from idlehand.home import home_lock, read_json, write_json
 from idlehand.loop import load_state, now_iso, tick
 from idlehand.peers import publish_document
@@ -59,6 +68,23 @@ def _note_tick_error(home: Path, exc: BaseException) -> None:
         return
 
 
+def _listen_address(config: dict) -> tuple[str, int, bool]:
+    """Host, port, and whether to listen. A bad port does not stop the node."""
+    publish = config.get("publish")
+    if not isinstance(publish, dict):
+        publish = {}
+    host = publish.get("host", "127.0.0.1")
+    if not isinstance(host, str) or not host.strip():
+        host = "127.0.0.1"
+    port = publish.get("port", DEFAULT_LISTEN_PORT)
+    if isinstance(port, bool) or not isinstance(port, int) or port < 0 or port > 65535:
+        port = DEFAULT_LISTEN_PORT
+    listen = publish.get("listen", True)
+    if not isinstance(listen, bool):
+        listen = True
+    return host, port, listen
+
+
 def serve(home: Path) -> None:
     config = ensure_home(home)
     stopped = [False]
@@ -70,9 +96,8 @@ def serve(home: Path) -> None:
     signal.signal(signal.SIGINT, handle)
     server = None
     thread = None
-    host = str(config["publish"]["host"])
-    port = int(config["publish"]["port"])
-    if config["publish"].get("listen", True):
+    host, port, listen = _listen_address(config)
+    if listen:
         server = start_publish_server(home, host, port)
         if server is not None:
             thread = threading.Thread(target=server.serve_forever, name="idlehand-publish", daemon=True)
