@@ -1309,3 +1309,153 @@ def test_audit_still_runs_when_fossah_dir_is_a_file(tmp_path: Path, monkeypatch)
     assert "private key material" in plan["sandbox"]["stdout"]
     assert "HOSTKEYMATERIAL" not in plan["sandbox"]["stdout"]
     assert "fossah-action=audit" in plan["sandbox"]["stdout"]
+
+
+def test_unreadable_peer_fetch_interval_still_contributes(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["publish"]["peer_fetch_interval_seconds"] = "soon"
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    save_peers(
+        home,
+        [{"url": "https://user:sekret@peer.example/fossah/publish", "id": "", "source": "user", "endorsements": 1}],
+    )
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert state["peers_runtime"]["last_error"] == "peer fetch interval is unreadable"
+    recorded = json.dumps(state) + (home / "publish.json").read_text(encoding="utf-8")
+    assert "sekret" not in recorded
+    assert "peer.example" in (home / "peers.toml").read_text(encoding="utf-8")
+
+
+def test_non_integer_peer_counters_do_not_stop_the_cycle(tmp_path: Path, monkeypatch) -> None:
+    from fossah.config import state_path
+    from fossah.home import write_json
+    from fossah.loop import load_state
+
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    document = {
+        "fossah": 1,
+        "node_id": "peer-b",
+        "peers": [{"url": "https://second.example/fossah/publish", "id": "second"}],
+        "repos": [{"url": "https://github.com/someone/not-imported"}],
+    }
+    peer_file = tmp_path / "peer.json"
+    peer_file.write_text(json.dumps(document), encoding="utf-8")
+    save_peers(home, [{"url": peer_file.as_uri(), "id": "", "source": "user", "endorsements": 1}])
+    stored = load_state(home, config)
+    stored["peers_runtime"]["added"] = "no"
+    stored["peers_runtime"]["ignored_remote_repos"] = "no"
+    write_json(state_path(home), stored)
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    assert state["peers_runtime"]["added"] == 1
+    assert state["peers_runtime"]["ignored_remote_repos"] == 1
+    assert "https://github.com/someone/not-imported" not in (home / "sources.toml").read_text(encoding="utf-8")
+
+
+def test_unreadable_trust_file_does_not_skip_the_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    peer = tmp_path / "peer.json"
+    peer.write_text(
+        '{"peers":[{"url":"https://second.example/fossah/publish","id":"second"}],"repos":[]}\n',
+        encoding="utf-8",
+    )
+    save_peers(home, [{"url": peer.as_uri(), "id": "", "source": "user", "endorsements": 1}])
+    (home / "trust.json").write_text("{\n", encoding="utf-8")
+    before = render_text(home)
+    assert "trust record is unreadable" in before
+    assert "spending:" in before
+    state = tick(home)
+    assert state["plans"][0]["contributed"] is True
+    text = render_text(home)
+    assert "trust record is unreadable" not in text
+    assert "accepted peer https://second.example/fossah/publish" in text
+    assert "spending:" in text
+    loaded = json.loads((home / "trust.json").read_text(encoding="utf-8"))
+    assert isinstance(loaded, list) and loaded
+
+
+def test_trust_symlink_and_object_are_not_shown(tmp_path: Path) -> None:
+    from fossah.trust import decision, remember
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    (home / "trust.json").write_text('{"reason": "sekret"}\n', encoding="utf-8")
+    hidden = render_text(home)
+    assert "sekret" not in hidden
+    assert "trust record is unreadable" in hidden
+    assert "spending:" in hidden
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        '[{"kind":"link","subject":"https://sekret.example/a","accepted":true,"reason":"sekret"}]\n',
+        encoding="utf-8",
+    )
+    trust = home / "trust.json"
+    trust.unlink()
+    trust.symlink_to(outside)
+    linked = render_text(home)
+    assert "sekret" not in linked
+    assert "trust record is unreadable" in linked
+    remember(home, [decision("link", "https://github.com/org/repo", False, "repository URL embeds credentials")])
+    assert "sekret" in outside.read_text(encoding="utf-8")
+    assert not trust.is_symlink()
+    stored = trust.read_text(encoding="utf-8")
+    assert "sekret" not in stored
+    assert "credentials" in stored
+    assert "trust record is unreadable" not in render_text(home)
+
+
+def test_atomic_write_does_not_follow_a_temp_symlink(tmp_path: Path) -> None:
+    from fossah.home import atomic_write
+
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("sekret", encoding="utf-8")
+    target = home / "state.json"
+    temporary = home / "state.json.tmp"
+    temporary.symlink_to(outside)
+    atomic_write(target, '{"ok": true}\n')
+    assert outside.read_text(encoding="utf-8") == "sekret"
+    assert not temporary.exists()
+    assert target.read_text(encoding="utf-8") == '{"ok": true}\n'
+    destination = tmp_path / "destination"
+    destination.write_text("keep-dest", encoding="utf-8")
+    target.unlink()
+    target.symlink_to(destination)
+    atomic_write(target, '{"ok": true}\n')
+    assert destination.read_text(encoding="utf-8") == "keep-dest"
+    assert not target.is_symlink()
+    assert target.read_text(encoding="utf-8") == '{"ok": true}\n'

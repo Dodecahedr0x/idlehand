@@ -118,6 +118,48 @@ def test_node_stays_up_when_the_clone_is_refused(tmp_path: Path, monkeypatch) ->
         stop_node(home)
 
 
+def test_bad_loop_interval_does_not_exit_the_node(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    config = load_config(home)
+    config["loop_interval_seconds"] = "fast"
+    save_config(home, config)
+    pid = start_node(home)
+    try:
+        time.sleep(0.4)
+        assert alive_pid(home) == pid
+        state = read_json(state_path(home)) or {}
+        assert state["node"]["status"] == "up"
+    finally:
+        stop_node(home)
+
+
+def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    pid = start_node(home)
+    try:
+        (home / "config.toml").write_text("{\n", encoding="utf-8")
+        deadline = time.time() + 3
+        state: dict = {}
+        while time.time() < deadline:
+            state = read_json(state_path(home)) or {}
+            if (state.get("node") or {}).get("last_error"):
+                break
+            time.sleep(0.05)
+        assert state["node"]["last_error"]
+        assert state["ledger"]["limit_tokens"] == 400
+        assert state["ledger"]["estimated_tokens"] == 0
+        assert alive_pid(home) == pid
+    finally:
+        stop_node(home)
+    assert alive_pid(home) is None
+
+
 def test_uninstalled_subscription_stays_up(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")

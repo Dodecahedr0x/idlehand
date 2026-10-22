@@ -89,6 +89,19 @@ def _ledger_count(value: object) -> int | None:
     return value
 
 
+def _counter(value: object) -> int:
+    """A stored tally. A value that is not a non-negative integer is zero."""
+    counted = _ledger_count(value)
+    return counted if counted is not None else 0
+
+
+def _fetch_interval(value: object) -> float | None:
+    """Seconds between peer fetches. None means the setting cannot be used."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
+
+
 def _limit_of(config: dict[str, Any]) -> int | None:
     """The spending limit, or None when the setting is not a non-negative integer."""
     return _ledger_count(config.get("spending_limit_tokens"))
@@ -526,7 +539,7 @@ def tick(home: Path) -> dict[str, Any]:
         peers = load_peers(home)
         state = load_state(home, config)
         listen_url = str(state.get("publish", {}).get("url", ""))
-    interval = float(config["publish"]["peer_fetch_interval_seconds"])
+    interval = _fetch_interval(config["publish"].get("peer_fetch_interval_seconds"))
     raw_last = state["peers_runtime"].get("last_fetch_epoch") or 0
     last = float(raw_last) if isinstance(raw_last, (int, float)) and not isinstance(raw_last, bool) else 0.0
     additions: list[PeerCandidate] = []
@@ -535,7 +548,7 @@ def tick(home: Path) -> dict[str, Any]:
     id_updates: dict[str, str] = {}
     trust_decisions: list[dict[str, Any]] = []
     fetched = False
-    if peers and epoch - last >= interval:
+    if interval is not None and peers and epoch - last >= interval:
         fetched = True
         additions, ignored, errors, id_updates, trust_decisions = _fetch_peers(
             peers, config=config, listen_url=listen_url, home=home
@@ -575,13 +588,15 @@ def tick(home: Path) -> dict[str, Any]:
                 )
                 known.add(candidate.url)
                 added += 1
-            state["peers_runtime"]["added"] = int(state["peers_runtime"].get("added") or 0) + added
-        if fetched:
+            state["peers_runtime"]["added"] = _counter(state["peers_runtime"].get("added")) + added
+        if interval is None:
+            state["peers_runtime"]["last_error"] = "peer fetch interval is unreadable"
+        elif fetched:
             state["peers_runtime"]["last_fetch_epoch"] = epoch
             state["peers_runtime"]["last_fetch_at"] = now_iso()
-            state["peers_runtime"]["ignored_remote_repos"] = int(
-                state["peers_runtime"].get("ignored_remote_repos") or 0
-            ) + ignored
+            state["peers_runtime"]["ignored_remote_repos"] = (
+                _counter(state["peers_runtime"].get("ignored_remote_repos")) + ignored
+            )
             state["peers_runtime"]["last_error"] = "; ".join(errors)[:500]
             extend_trust(home, trust_decisions)
         save_peers(home, peers)

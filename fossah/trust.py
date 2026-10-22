@@ -41,11 +41,30 @@ def public_reason(reason: str) -> str:
     return text[:500]
 
 
-def load_trust(home: Path) -> list[dict[str, Any]]:
-    raw = read_json(trust_path(home))
+def _read_trust(home: Path) -> tuple[list[dict[str, Any]], bool]:
+    """Decisions, and whether the file could be read. A symlink is not followed."""
+    path = trust_path(home)
+    if path.is_symlink():
+        return [], False
+    if not path.exists():
+        return [], True
+    try:
+        raw = read_json(path)
+    except (OSError, UnicodeError, ValueError):
+        return [], False
     if not isinstance(raw, list):
-        return []
-    return [item for item in raw if isinstance(item, dict)]
+        return [], False
+    return [item for item in raw if isinstance(item, dict)], True
+
+
+def load_trust(home: Path) -> list[dict[str, Any]]:
+    items, _readable = _read_trust(home)
+    return items
+
+
+def trust_is_readable(home: Path) -> bool:
+    _items, readable = _read_trust(home)
+    return readable
 
 
 def decision(kind: str, subject: str, accepted: bool, reason: str) -> dict[str, Any]:

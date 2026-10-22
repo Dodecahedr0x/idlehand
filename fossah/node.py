@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from fossah.config import ensure_home, load_config, load_peers, load_sources, pid_path, publish_path, state_path
-from fossah.home import home_lock, write_json
+from fossah.home import home_lock, read_json, write_json
 from fossah.loop import load_state, now_iso, tick
 from fossah.peers import publish_document
 from fossah.publish import start_publish_server
@@ -21,6 +21,41 @@ def _sleep(seconds: float, stopped: list[bool]) -> None:
         if stopped[0]:
             return
         time.sleep(min(0.1, max(0, deadline - time.time())))
+
+
+def _loop_interval(config: dict) -> float:
+    """Seconds to wait between ticks. A bad setting stays at five seconds."""
+    value = config.get("loop_interval_seconds", 5)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return 5.0
+    return float(value)
+
+
+def _note_tick_error(home: Path, exc: BaseException) -> None:
+    """Record a tick failure. An unreadable config must not exit the node."""
+    message = str(exc)[:500]
+    try:
+        with home_lock(home):
+            try:
+                config = load_config(home)
+            except (OSError, UnicodeError, ValueError):
+                raw = read_json(state_path(home))
+                if not isinstance(raw, dict):
+                    return
+                node = raw.get("node")
+                if not isinstance(node, dict):
+                    node = {}
+                    raw["node"] = node
+                node["last_error"] = message
+                node["heartbeat_at"] = now_iso()
+                write_json(state_path(home), raw)
+                return
+            state = load_state(home, config)
+            state["node"]["last_error"] = message
+            state["node"]["heartbeat_at"] = now_iso()
+            write_json(state_path(home), state)
+    except (OSError, UnicodeError, ValueError):
+        return
 
 
 def serve(home: Path) -> None:
@@ -68,12 +103,11 @@ def serve(home: Path) -> None:
             try:
                 tick(home)
             except Exception as exc:  # noqa: BLE001 — the node stays up
-                with home_lock(home):
-                    state = load_state(home, load_config(home))
-                    state["node"]["last_error"] = str(exc)[:500]
-                    state["node"]["heartbeat_at"] = now_iso()
-                    write_json(state_path(home), state)
-            interval = float(load_config(home).get("loop_interval_seconds", 5))
+                _note_tick_error(home, exc)
+            try:
+                interval = _loop_interval(load_config(home))
+            except (OSError, UnicodeError, ValueError):
+                interval = 5.0
             _sleep(interval, stopped)
     finally:
         if server is not None:
@@ -81,9 +115,18 @@ def serve(home: Path) -> None:
             server.server_close()
         if thread is not None:
             thread.join(timeout=2)
-        with home_lock(home):
-            state = load_state(home, load_config(home))
-            state["node"]["status"] = "stopped"
-            state["node"]["heartbeat_at"] = now_iso()
-            write_json(state_path(home), state)
+        try:
+            with home_lock(home):
+                try:
+                    state = load_state(home, load_config(home))
+                except (OSError, UnicodeError, ValueError):
+                    raw = read_json(state_path(home))
+                    state = raw if isinstance(raw, dict) else {"node": {}}
+                    if not isinstance(state.get("node"), dict):
+                        state["node"] = {}
+                state["node"]["status"] = "stopped"
+                state["node"]["heartbeat_at"] = now_iso()
+                write_json(state_path(home), state)
+        except (OSError, UnicodeError, ValueError):
+            pass
         pid_path(home).unlink(missing_ok=True)

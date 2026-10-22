@@ -35,6 +35,8 @@ def home_lock(home: Path) -> Iterator[None]:
 def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
+    if temporary.is_symlink():
+        temporary.unlink()
     temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
 
