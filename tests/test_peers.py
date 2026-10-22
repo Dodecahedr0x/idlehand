@@ -142,6 +142,30 @@ def test_review_explains_each_peer_and_does_not_import_repos() -> None:
     assert sum(item["reason"] == "the peer cap was reached" for item in kept_decisions) == 2
 
 
+def test_bad_endorsement_count_is_skipped(tmp_path) -> None:
+    from fossah.config import ensure_home, load_peers, peers_path
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    peers_path(home).write_text(
+        "[[peers]]\n"
+        'url = "https://bad.example/fossah/publish"\n'
+        'endorsements = "no"\n'
+        "\n"
+        "[[peers]]\n"
+        'url = "https://good.example/fossah/publish"\n'
+        "endorsements = 2\n",
+        encoding="utf-8",
+    )
+    loaded = load_peers(home)
+    assert [item["url"] for item in loaded] == [
+        "https://bad.example/fossah/publish",
+        "https://good.example/fossah/publish",
+    ]
+    assert loaded[0]["endorsements"] == 1
+    assert loaded[1]["endorsements"] == 2
+
+
 def test_non_boolean_heuristic_flags_do_not_open_http() -> None:
     allowed, reason = explain_peer_url(
         "http://127.0.0.1:9/fossah/publish",

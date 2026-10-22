@@ -153,12 +153,15 @@ def load_peers(home: Path) -> list[dict[str, Any]]:
     cleaned: list[dict[str, Any]] = []
     for peer in peers:
         if isinstance(peer, dict) and isinstance(peer.get("url"), str):
+            count = peer.get("endorsements", 1)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                count = 1
             cleaned.append(
                 {
                     "url": peer["url"],
                     "id": str(peer.get("id", "")),
                     "source": str(peer.get("source", "user")),
-                    "endorsements": int(peer.get("endorsements", 1) or 1),
+                    "endorsements": count,
                 }
             )
     return cleaned
