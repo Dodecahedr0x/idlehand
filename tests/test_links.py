@@ -151,6 +151,28 @@ def test_empty_list_and_mixed_json_are_visible(tmp_path: Path) -> None:
     assert any("http or https" in reason for reason in reasons)
 
 
+def test_credential_list_url_and_oversized_list_are_refused(tmp_path: Path) -> None:
+    from fossah.trust import load_trust
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    before = [repo["url"] for repo in load_sources(home)]
+    with pytest.raises(LinkError, match="credentials"):
+        apply_link(home, "fossah://add?list=https://user:secret@example.com/repos.txt")
+    stored = (home / "trust.json").read_text(encoding="utf-8")
+    assert "secret" not in stored
+    assert any("credentials" in item["reason"] for item in load_trust(home))
+    big = tmp_path / "big.txt"
+    big.write_bytes(b"https://github.com/org/name\n" * 80_000)
+    with pytest.raises(LinkError, match="1MB"):
+        apply_link(home, f"fossah://add?list={big.as_uri()}")
+    assert [repo["url"] for repo in load_sources(home)] == before
+    array = tmp_path / "array.json"
+    array.write_text(json.dumps(["https://github.com/pallets/jinja", {"url": "notaurl"}]), encoding="utf-8")
+    added = apply_link(home, f"fossah://add?list={array.as_uri()}")
+    assert added == ["https://github.com/pallets/jinja"]
+
+
 def test_redirected_list_is_refused(tmp_path: Path) -> None:
     from fossah.trust import load_trust
 

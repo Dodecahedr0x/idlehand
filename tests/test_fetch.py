@@ -210,6 +210,59 @@ def test_clone_ignores_a_global_gitconfig(tmp_path: Path, monkeypatch) -> None:
     assert not marker.exists()
 
 
+def test_absolute_local_path_clones_and_a_relative_path_does_not(tmp_path: Path) -> None:
+    from tests.support import SAMPLE_FILES, make_repo
+
+    make_repo(tmp_path / "sample", SAMPLE_FILES)
+    cloned = clone_repository(str((tmp_path / "sample").resolve()), tmp_path / "workspaces" / "abs")
+    assert cloned.cloned is True
+    refused = clone_repository("relative/repo", tmp_path / "workspaces" / "rel")
+    assert refused.cloned is False
+    assert "not a public git URL" in refused.reason
+    assert not (tmp_path / "workspaces" / "rel").exists()
+
+
+def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
+    import json
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from fossah.home import write_json
+    from fossah.publish import PublishHandler
+
+    home = tmp_path / "home"
+    home.mkdir()
+    write_json(
+        home / "publish.json",
+        {"fossah": 1, "peers": [], "repos": [{"url": "https://github.com/org/name"}]},
+    )
+    write_json(home / "trust.json", [{"subject": "secret-decision", "reason": "hidden"}])
+    write_json(home / "state.json", {"ledger": {"metered_tokens": 99}, "subscription": {"binary": "claude"}})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PublishHandler)
+    server.publish_file = str(home / "publish.json")  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/fossah/publish", timeout=2) as response:
+            body = response.read().decode("utf-8")
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/trust.json", timeout=2)
+            missing_code = 200
+        except urllib.error.HTTPError as exc:
+            missing_code = exc.code
+    finally:
+        server.shutdown()
+        server.server_close()
+    payload = json.loads(body)
+    assert payload["fossah"] == 1
+    assert "secret-decision" not in body
+    assert "metered_tokens" not in body
+    assert missing_code == 404
+
+
 def test_local_clone_and_non_repo(tmp_path: Path) -> None:
     from tests.support import SAMPLE_FILES, make_repo
 

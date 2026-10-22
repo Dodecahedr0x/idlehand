@@ -1,6 +1,6 @@
 import json
 
-from fossah.peers import normalize_peer_url, peer_url_allowed, review_second_degree, select_second_degree
+from fossah.peers import explain_peer_url, normalize_peer_url, peer_url_allowed, review_second_degree, select_second_degree
 
 HEURISTIC = {
     "min_endorsements": 1,
@@ -138,6 +138,12 @@ def test_review_explains_each_peer_and_does_not_import_repos() -> None:
     )
     assert len(kept) == 1
     assert sum(item["reason"] == "the peer cap was reached" for item in kept_decisions) == 2
+
+
+def test_unsupported_peer_scheme_is_refused() -> None:
+    allowed, reason = explain_peer_url("ftp://files.example/fossah/publish", HEURISTIC)
+    assert allowed is False
+    assert "ftp" in reason
 
 
 def test_user_added_peer_skips_the_second_degree_check(tmp_path) -> None:
