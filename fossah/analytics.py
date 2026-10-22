@@ -62,9 +62,19 @@ def render_text(home: Path) -> str:
         sub_line = f"{subscription.get('name')} connected ({subscription.get('binary')})"
     else:
         sub_line = subscription.get("detail") or "subscription is not connected"
-    spent = int(ledger.get("estimated_tokens", 0) or 0)
+    estimated = int(ledger.get("estimated_tokens", 0) or 0)
+    metered = int(ledger.get("metered_tokens", 0) or 0)
+    spent = estimated + metered
     limit = ledger.get("limit_tokens", snap["spending_limit_tokens"])
+    metering = ledger.get("metering") or "local-estimate"
+    if metering == "reported":
+        spending_detail = "reported by the subscription"
+    elif metering == "mixed":
+        spending_detail = f"{estimated} estimated, {metered} reported"
+    else:
+        spending_detail = "local estimate, not billed usage"
     pushed = int(state.get("contributions_pushed", 0) or 0) if isinstance(state, dict) else 0
+    recorded = sum(1 for plan in plans if isinstance(plan, dict) and plan.get("contributed"))
     direct = snap["peers"]
     learned = [peer for peer in direct if peer.get("source") == "peers-of-peers"]
     lines = [
@@ -72,13 +82,15 @@ def render_text(home: Path) -> str:
         f"  node: {node_line}",
         f"  subscription: {sub_line}",
         f"  loop: {loop.get('status', 'idle')} — {loop.get('reason', '')}".rstrip(" —"),
-        f"  spending: {spent} / {limit} tokens (local estimate, not billed usage)",
+        f"  spending: {spent} / {limit} tokens ({spending_detail})",
+        f"  contributions recorded: {recorded}",
         f"  contributions pushed: {pushed}",
         f"  repos: {len(snap['sources'])} in the local source list",
         f"  peers: {len(direct)} direct, {len(learned)} added from peers of peers",
         f"  remote repo lists ignored: {peers_runtime.get('ignored_remote_repos', 0)}",
-        "  nothing was contributed",
     ]
+    if recorded == 0:
+        lines.append("  nothing was contributed")
     if peers_runtime.get("last_error"):
         lines.append(f"  peer fetch: {peers_runtime['last_error']}")
     if not plans:
@@ -86,15 +98,22 @@ def render_text(home: Path) -> str:
     else:
         lines.append(f"  plans: {len(plans)} (latest)")
         for plan in plans[-5:]:
+            if not isinstance(plan, dict):
+                continue
             demo = " demo" if plan.get("demo") else ""
             sandbox = plan.get("sandbox") or {}
+            fetch = plan.get("fetch") or {}
+            contributed = "yes" if plan.get("contributed") else "no"
+            detail = sandbox.get("reason") or fetch.get("reason") or ""
+            cloned = "yes" if plan.get("upstream_cloned") else "no"
             lines.append(
                 f"    {plan.get('action')}{demo} {plan.get('repo')} "
-                f"contributed=no sandbox={sandbox.get('reason', '')}"
+                f"contributed={contributed} cloned={cloned} {detail}".rstrip()
             )
             command = _command(plan.get("subscription_command"))
             if command:
-                lines.append(f"      command (not run): {command}")
+                ran = "ran on the trusted side" if plan.get("subscription_executed") else "not run"
+                lines.append(f"      command ({ran}): {command}")
     return "\n".join(lines) + "\n"
 
 

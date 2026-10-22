@@ -1,12 +1,14 @@
+import json
 import os
 import time
 from pathlib import Path
 
 from fossah.analytics import render_text
-from fossah.config import ensure_home, load_config, save_config, state_path
+from fossah.config import ensure_home, load_config, save_config, save_sources, state_path
 from fossah.handler import register_protocol_handler
 from fossah.home import read_json
 from fossah.process import alive_pid, start_node, stop_node
+from tests.support import SAMPLE_FILES, make_repo
 
 
 def _configure(home: Path) -> None:
@@ -41,24 +43,37 @@ def test_node_stays_up_after_the_limit(tmp_path: Path, monkeypatch) -> None:
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
     monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-node-secret")
     _configure(home)
     config = load_config(home)
     config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
     save_config(home, config)
+    save_sources(home, [{"url": make_repo(tmp_path / "sample", SAMPLE_FILES), "note": "local"}])
     pid = start_node(home)
     try:
         state = _wait_for(
             home,
             lambda item: item.get("loop", {}).get("status") == "stopped"
             and item.get("ledger", {}).get("estimated_tokens") == 400,
+            timeout=60,
         )
         assert alive_pid(home) == pid
         assert state["contributions_pushed"] == 0
         assert [plan["action"] for plan in state["plans"]] == ["test", "audit", "issue", "pull_request"]
+        assert all(plan["contributed"] is True for plan in state["plans"])
+        assert all(plan["subscription_executed"] is False for plan in state["plans"])
+        assert all(plan["upstream_cloned"] is True for plan in state["plans"])
+        assert state["plans"][0]["sandbox"]["ok"] is True
+        assert "sk-node-secret" not in json.dumps(state)
         assert not invoked.exists()
         text = render_text(home)
-        assert "nothing was contributed" in text
+        assert "contributions recorded: 4" in text
+        assert "contributions pushed: 0" in text
+        assert "nothing was contributed" not in text
         assert "claude" in text
+        assert "local estimate, not billed usage" in text
     finally:
         stop_node(home)
     assert alive_pid(home) is None

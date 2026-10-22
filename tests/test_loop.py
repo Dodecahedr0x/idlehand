@@ -1,8 +1,11 @@
 import json
+import subprocess
 from pathlib import Path
 
-from fossah.config import ensure_home, load_sources, save_config, save_peers
-from fossah.loop import tick
+from fossah.analytics import render_text
+from fossah.config import ensure_home, load_sources, save_config, save_peers, save_sources
+from fossah.loop import _workspace, tick
+from tests.support import BROKEN_FILES, KEY_FILES, SAMPLE_FILES, make_repo
 
 
 def _ready(home: Path, **updates):
@@ -15,39 +18,82 @@ def _ready(home: Path, **updates):
     return config
 
 
-def test_connected_loop_plans_issue_and_pr_without_running_the_cli(tmp_path: Path, monkeypatch) -> None:
-    home = tmp_path / "home"
+def _connect(home: Path, tmp_path: Path, monkeypatch, name: str = "claude"):
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    invoked = tmp_path / "claude-invoked"
-    script = bin_dir / "claude"
-    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\n", encoding="utf-8")
+    bin_dir.mkdir(exist_ok=True)
+    invoked = tmp_path / f"{name}-invoked"
+    script = bin_dir / name
+    script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\npwd >> '{invoked}'\n", encoding="utf-8")
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
+    monkeypatch.setenv("GH_TOKEN", "gh-secret")
+    return invoked
+
+
+def _local_source(home: Path, tmp_path: Path, files: dict[str, str] | None = None) -> str:
+    url = make_repo(tmp_path / "sample", files or SAMPLE_FILES)
+    save_sources(home, [{"url": url, "note": "local"}])
+    return url
+
+
+def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
     config = _ready(home)
     config["subscription"] = "claude"
     config["spending_limit_tokens"] = 400
     config["estimate_tokens_per_cycle"] = 100
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
     save_config(home, config)
+    url = _local_source(home, tmp_path)
+    source_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path / "sample",
+        text=True,
+    ).strip()
     state = {}
     for _ in range(4):
         state = tick(home)
     assert state["subscription"]["connected"] is True
     assert [plan["action"] for plan in state["plans"]] == ["test", "audit", "issue", "pull_request"]
     assert state["ledger"]["estimated_tokens"] == 400
+    assert state["ledger"]["metering"] == "local-estimate"
     assert state["loop"]["status"] == "stopped"
     assert state["contributions_pushed"] == 0
-    assert all(plan["contributed"] is False for plan in state["plans"])
+    assert all(plan["contributed"] is True for plan in state["plans"])
+    assert all(plan["pushed"] is False for plan in state["plans"])
     assert all(plan["subscription_executed"] is False for plan in state["plans"])
-    assert all(plan["upstream_cloned"] is False for plan in state["plans"])
+    assert all(plan["upstream_cloned"] is True for plan in state["plans"])
+    assert all(plan["sandbox"]["invoked"] is True for plan in state["plans"])
     assert "owned" not in json.dumps(state["plans"])
+    assert "sk-anthropic" not in json.dumps(state["plans"])
     pull = state["plans"][-1]
     assert pull["subscription_command"][1] == "-p"
     assert "pull request" in pull["subscription_command"][2].lower()
+    assert pull["sandbox"]["argv"][0] == "/usr/bin/python3"
+    assert str(home) not in " ".join(pull["sandbox"]["argv"])
+    assert "fossah-action=test" in state["plans"][0]["sandbox"]["stdout"]
+    assert "tests_run=1" in state["plans"][0]["sandbox"]["stdout"]
+    assert state["plans"][0]["sandbox"]["ok"] is True
+    assert "fossah-action=issue" in state["plans"][2]["sandbox"]["stdout"]
+    assert "fossah-action=pull_request" in pull["sandbox"]["stdout"]
+    draft = _workspace(home, url) / ".fossah" / "pr-draft.md"
+    assert "not pushed" in draft.read_text(encoding="utf-8")
     assert not invoked.exists()
+    after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path / "sample", text=True).strip()
+    assert after == source_head
     stopped = tick(home)
     assert len(stopped["plans"]) == 4
     assert stopped["ledger"]["estimated_tokens"] == 400
+    text = render_text(home)
+    assert "contributions recorded: 4" in text
+    assert "contributions pushed: 0" in text
+    assert "nothing was contributed" not in text
+    assert "local estimate, not billed usage" in text
+    assert "command (not run):" in text
+    assert "contributed=yes" in text
 
 
 def test_missing_cli_does_not_pretend_to_contribute(tmp_path: Path, monkeypatch) -> None:
@@ -55,38 +101,47 @@ def test_missing_cli_does_not_pretend_to_contribute(tmp_path: Path, monkeypatch)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     config = _ready(home)
     config["subscription"] = "codex"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
     save_config(home, config)
+    _local_source(home, tmp_path)
     state = tick(home)
     assert state["subscription"]["connected"] is False
     assert "not connected" in state["subscription"]["detail"]
     assert state["plans"] == []
     assert state["loop"]["status"] == "idle"
     assert state["contributions_pushed"] == 0
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert "nothing was contributed" in render_text(home)
 
 
 def test_limit_resumes_when_raised(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "codex").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (bin_dir / "codex").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    _connect(home, tmp_path, monkeypatch, name="codex")
     config = _ready(home)
     config["subscription"] = "codex"
     config["spending_limit_tokens"] = 100
     config["estimate_tokens_per_cycle"] = 100
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
     save_config(home, config)
+    _local_source(home, tmp_path)
     first = tick(home)
     assert first["ledger"]["estimated_tokens"] == 100
+    assert first["plans"][0]["contributed"] is True
     assert first["loop"]["status"] == "stopped"
     config = _ready(home)
     config["subscription"] = "codex"
     config["spending_limit_tokens"] = 300
     config["estimate_tokens_per_cycle"] = 100
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
     save_config(home, config)
     second = tick(home)
     assert second["ledger"]["estimated_tokens"] == 200
     assert second["loop"]["status"] == "running"
+    assert second["plans"][1]["subscription_executed"] is False
+    assert second["plans"][1]["subscription_command"][1] == "exec"
 
 
 def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
@@ -115,7 +170,7 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     assert published["repos"]
 
 
-def test_sandbox_probe_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
+def test_demo_clone_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
@@ -126,12 +181,211 @@ def test_sandbox_probe_is_not_a_contribution(tmp_path: Path, monkeypatch) -> Non
     config["spending_limit_tokens"] = 2500
     config["estimate_tokens_per_cycle"] = 2500
     save_config(home, config)
+    _local_source(home, tmp_path)
     state = tick(home)
     plan = state["plans"][0]
     assert plan["demo"] is True
     assert plan["action"] == "test"
     assert plan["contributed"] is False
+    assert plan["upstream_cloned"] is True
     assert plan["sandbox"]["ok"] is True
-    assert "fossah-sandbox-ok" in plan["sandbox"]["stdout"]
+    assert "fossah-action=test" in plan["sandbox"]["stdout"]
+    assert "tests_run=1" in plan["sandbox"]["stdout"]
     assert "sk-openai" not in json.dumps(plan["sandbox"])
     assert state["contributions_pushed"] == 0
+    assert state["ledger"]["estimated_tokens"] == 2500
+    assert "nothing was contributed" in render_text(home)
+    assert "contributed=no" in render_text(home)
+
+
+def test_failed_fetch_is_not_a_contribution_and_rotates(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 100
+    save_config(home, config)
+    good = make_repo(tmp_path / "good", SAMPLE_FILES)
+    save_sources(
+        home,
+        [
+            {"url": "https://user:secret@github.com/org/repo.git", "note": "credentials"},
+            {"url": "ssh://git@github.com/org/other.git", "note": "ssh"},
+            {"url": good, "note": "local"},
+        ],
+    )
+    first = tick(home)
+    assert first["plans"][0]["contributed"] is False
+    assert first["plans"][0]["upstream_cloned"] is False
+    assert "credentials" in first["plans"][0]["fetch"]["reason"]
+    assert first["ledger"]["estimated_tokens"] == 0
+    assert first["loop"]["cycles"] == 1
+    second = tick(home)
+    assert "SSH" in second["plans"][1]["fetch"]["reason"]
+    assert second["plans"][1]["contributed"] is False
+    assert second["ledger"]["estimated_tokens"] == 0
+    third = tick(home)
+    assert third["plans"][2]["contributed"] is True
+    assert third["plans"][2]["upstream_cloned"] is True
+    assert third["ledger"]["estimated_tokens"] == 100
+    assert "secret" not in json.dumps(third["plans"])
+
+
+def test_refused_sandbox_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = False
+    config["estimate_tokens_per_cycle"] = 100
+    save_config(home, config)
+    url = _local_source(home, tmp_path)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["sandbox"]["invoked"] is False
+    assert plan["sandbox"]["reason"] == "sandbox execution is off"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["loop"]["cycles"] == 1
+    assert not _workspace(home, url).exists()
+    assert not invoked.exists()
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "none"
+    save_config(home, config)
+    refused = tick(home)
+    assert refused["plans"][1]["contributed"] is False
+    assert "refused" in refused["plans"][1]["sandbox"]["reason"]
+    assert refused["ledger"]["estimated_tokens"] == 0
+
+
+def test_syntax_error_still_counts_after_the_command_runs(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 80
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path, BROKEN_FILES)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["action"] == "test"
+    assert plan["upstream_cloned"] is True
+    assert plan["sandbox"]["invoked"] is True
+    assert plan["sandbox"]["ok"] is False
+    assert plan["contributed"] is True
+    assert "syntax" in plan["sandbox"]["stdout"]
+    assert state["ledger"]["estimated_tokens"] == 80
+    assert state["contributions_pushed"] == 0
+
+
+def test_audit_and_issue_drafts_stay_local(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["allow_test"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    url = _local_source(home, tmp_path, KEY_FILES)
+    first = tick(home)
+    audit = first["plans"][0]
+    assert audit["action"] == "audit"
+    assert audit["contributed"] is True
+    assert "private key" in audit["sandbox"]["stdout"]
+    report = (_workspace(home, url) / ".fossah" / "audit.txt").read_text(encoding="utf-8")
+    assert "private key" in report
+    second = tick(home)
+    issue = second["plans"][1]
+    assert issue["action"] == "issue"
+    assert issue["contributed"] is True
+    draft = (_workspace(home, url) / ".fossah" / "issue-draft.md").read_text(encoding="utf-8")
+    assert "not filed" in draft
+    assert "private key" in draft
+    assert second["contributions_pushed"] == 0
+
+
+def test_sandbox_setup_failure_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
+    from fossah.sandbox import SandboxResult
+
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 50
+    save_config(home, config)
+    _local_source(home, tmp_path)
+
+    def exploded(*args, **kwargs):
+        return SandboxResult(
+            runtime="namespace",
+            invoked=False,
+            ok=False,
+            exit_code=97,
+            stdout="",
+            stderr="sandbox setup failed",
+            reason="sandbox setup failed",
+            argv=["/usr/bin/python3", "-c", "print(1)"],
+        )
+
+    monkeypatch.setattr("fossah.loop.run", exploded)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["upstream_cloned"] is True
+    assert plan["sandbox"]["invoked"] is False
+    assert plan["sandbox"]["exit_code"] == 97
+    assert plan["contributed"] is False
+    assert state["ledger"]["estimated_tokens"] == 0
+
+
+def test_fetch_exception_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+
+    def boom(url, workspace, **kwargs):
+        raise RuntimeError("fetch blew up")
+
+    monkeypatch.setattr("fossah.loop.clone_repository", boom)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["upstream_cloned"] is False
+    assert "fetch blew up" in plan["fetch"]["reason"]
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["loop"]["cycles"] == 1
+    assert state["node"]["status"] == "up"
+
+
+def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    monkeypatch.setattr("fossah.fetch.resolve_git", lambda: None)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["upstream_cloned"] is False
+    assert plan["fetch"]["reason"] == "git is not installed"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["loop"]["status"] == "running"

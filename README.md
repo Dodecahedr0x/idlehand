@@ -39,7 +39,7 @@ fossah analytics
 fossah stop
 ```
 
-Demo plans are labeled demo. Token totals in this slice are local estimates, not usage reported by a provider.
+Demo plans are labeled demo. A demo cycle can clone a repository and run the sandboxed command, and it still does not record a contribution. Token totals in this slice are local estimates, not usage reported by a provider.
 
 ## Defaults
 
@@ -106,7 +106,7 @@ The listen port is bound to loopback until you change `publish.host`.
 
 Repository commands run in a container when Docker or Podman is installed. Otherwise Fossah uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no network, and a cleared environment. Home, credentials, and the rest of the host filesystem are not mounted. If no runtime can start, Fossah refuses the command instead of running it on the host.
 
-Subscription CLIs stay outside the sandbox. Their credentials are not copied into it.
+The contribution loop clones one repository from the local source list, then runs the action in that sandbox. The clone itself stays outside the sandbox: public http(s) URLs, or a local path the source list already names. SSH URLs and URLs with embedded credentials are refused. Subscription CLIs stay outside the sandbox. Their credentials are not copied into it.
 
 ```bash
 fossah sandbox spec
@@ -121,6 +121,8 @@ Real:
 
 - local CLI and a node process that stays up
 - config for the subscription, source list, rules, spending limit, and peers
+- one clone per cycle from the local source list, then test, audit, issue, and pull request commands in the sandbox
+- a contribution recorded only after that sandboxed command has run
 - local token estimate that stops the loop at the limit
 - `fossah analytics`
 - the loop starting after a subscription CLI is connected
@@ -131,9 +133,9 @@ Real:
 
 Not done in this slice:
 
-- Claude, Codex, and Cursor are not invoked. The command is shown and not run, so no issue or pull request is sent and no provider tokens are metered.
-- Upstream repositories are not cloned. The sandbox probe uses an empty local workspace.
-- `contributions pushed` stays at 0. Demo output is not work that landed upstream.
+- Claude, Codex, and Cursor are not invoked. The command is shown and not run, so no provider tokens are metered.
+- Issue and pull request drafts stay in the workspace. Nothing is pushed. `contributions pushed` stays at 0.
+- Token totals are a local estimate. Demo output is not a contribution.
 
 ## Tests
 
