@@ -125,6 +125,32 @@ def test_kept_drafts_do_not_follow_a_symlink(tmp_path: Path) -> None:
     assert not (home / "drafts").exists() or not list((home / "drafts").rglob("issue-draft.md"))
 
 
+def test_non_positive_estimate_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["spending_limit_tokens"] = 100
+    config["estimate_tokens_per_cycle"] = 0
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["status"] == "stopped"
+    assert state["loop"]["reason"] == "the per-cycle estimate must be positive"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert not invoked.exists()
+    config["estimate_tokens_per_cycle"] = -50
+    save_config(home, config)
+    again = tick(home)
+    assert again["plans"] == []
+    assert again["ledger"]["estimated_tokens"] == 0
+    assert again["loop"]["reason"] == "the per-cycle estimate must be positive"
+    assert not (home / "workspaces").exists() or not any((home / "workspaces").iterdir())
+
+
 def test_zero_limit_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     invoked = _connect(home, tmp_path, monkeypatch)

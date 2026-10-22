@@ -288,8 +288,13 @@ def _prepare_cycle(
     cycles = int(state["loop"]["cycles"])
     spent = int(state["ledger"]["estimated_tokens"]) + int(state["ledger"]["metered_tokens"])
     limit = int(config["spending_limit_tokens"])
-    cost = int(config["estimate_tokens_per_cycle"])
+    raw_cost = config["estimate_tokens_per_cycle"]
+    cost = raw_cost if isinstance(raw_cost, int) and not isinstance(raw_cost, bool) and raw_cost > 0 else None
     state["ledger"]["limit_tokens"] = limit
+    if cost is None:
+        state["loop"]["status"] = "stopped"
+        state["loop"]["reason"] = "the per-cycle estimate must be positive"
+        return None
     if state["loop"].get("reason") == "spending ledger is unreadable":
         state["loop"]["status"] = "stopped"
         return None
@@ -411,7 +416,8 @@ def _commit_cycle(
     outcome: dict[str, Any],
 ) -> None:
     cycles = int(state["loop"]["cycles"])
-    cost = int(config["estimate_tokens_per_cycle"])
+    raw_cost = config["estimate_tokens_per_cycle"]
+    cost = raw_cost if isinstance(raw_cost, int) and not isinstance(raw_cost, bool) and raw_cost > 0 else 0
     limit = int(config["spending_limit_tokens"])
     sandbox = outcome["sandbox"]
     planner = outcome.get("planner") if isinstance(outcome.get("planner"), dict) else None
