@@ -57,6 +57,7 @@ class ManageableRepo:
 class ForgeResult:
     ok: bool
     detail: str
+    output: str = ""
 
 
 class Forge(Protocol):

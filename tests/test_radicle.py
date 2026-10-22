@@ -432,7 +432,8 @@ def test_patch_check_needs_a_sandbox_and_a_delegation(tmp_path: Path, monkeypatc
     assert "patch review" not in log.read_text(encoding="utf-8")
 
     def failed(*_args: object, **_kwargs: object) -> SandboxResult:
-        return SandboxResult("namespace", True, False, 1, "", "nope", "sandbox exited 1", ["python"])
+        report = "FAIL tests/test_marked.py::test_marked\ntests_run=1\nfailures=1\nidlehand-action=test\n"
+        return SandboxResult("namespace", True, False, 1, report, "nope", "sandbox exited 1", ["python"])
 
     monkeypatch.setattr("idlehand.radicle.run_sandbox", failed)
     log.write_text("", encoding="utf-8")
@@ -444,8 +445,23 @@ def test_patch_check_needs_a_sandbox_and_a_delegation(tmp_path: Path, monkeypatc
     assert "--reject" in recorded
     assert "--accept" not in recorded
 
+    def none_ran(*_args: object, **_kwargs: object) -> SandboxResult:
+        report = "syntax_errors=0\ntests_run=0\nfailures=0\nidlehand-action=test\n"
+        return SandboxResult("namespace", True, False, 1, report, "", "sandbox exited 1", ["python"])
+
+    monkeypatch.setattr("idlehand.radicle.run_sandbox", none_ran)
+    log.write_text("", encoding="utf-8")
+    assert main(["--home", str(home), "rad", "patch", "check", RID, PATCH, "--path", str(checkout)]) == 1
+    captured = capsys.readouterr()
+    assert "did not run any tests" in captured.err
+    assert "tests_run=0" in captured.out
+    assert "accepted" not in captured.out
+    assert "refused patch" not in captured.out
+    assert "patch review" not in log.read_text(encoding="utf-8")
+
     def passed(*_args: object, **_kwargs: object) -> SandboxResult:
-        return SandboxResult("namespace", True, True, 0, "idlehand-action=test\n", "", "sandbox command finished", ["python"])
+        report = "PASS tests/test_marked.py::test_marked\ntests_run=1\nfailures=0\nidlehand-action=test\n"
+        return SandboxResult("namespace", True, True, 0, report, "", "sandbox command finished", ["python"])
 
     monkeypatch.setattr("idlehand.radicle.run_sandbox", passed)
     log.write_text("", encoding="utf-8")
@@ -491,7 +507,8 @@ def test_a_send_without_replication_is_not_recorded(tmp_path: Path, monkeypatch,
     assert "opened patch" not in captured.out
 
     def passed(*_args: object, **_kwargs: object) -> SandboxResult:
-        return SandboxResult("namespace", True, True, 0, "idlehand-action=test\n", "", "sandbox command finished", ["python"])
+        report = "PASS tests/test_marked.py::test_marked\ntests_run=1\nfailures=0\nidlehand-action=test\n"
+        return SandboxResult("namespace", True, True, 0, report, "", "sandbox command finished", ["python"])
 
     monkeypatch.setattr("idlehand.radicle.run_sandbox", passed)
     log.write_text("", encoding="utf-8")

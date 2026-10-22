@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -279,12 +280,16 @@ def run_namespace(workspace: Path, command: list[str], timeout: float = 30) -> S
         stderr=subprocess.PIPE,
         text=True,
         env=_clean_helper_env(),
+        start_new_session=True,
     )
     scratch = Path(f"/tmp/idlehand-jail-{process.pid}")
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            process.kill()
         process.communicate()
         shutil.rmtree(scratch, ignore_errors=True)
         return SandboxResult(

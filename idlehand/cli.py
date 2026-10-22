@@ -309,6 +309,8 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
 
 
 def _finish(result: ForgeResult) -> int:
+    if result.output:
+        print(result.output, end="" if result.output.endswith("\n") else "\n")
     print(result.detail, file=sys.stdout if result.ok else sys.stderr)
     return 0 if result.ok else 1
 

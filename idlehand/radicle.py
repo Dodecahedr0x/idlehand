@@ -11,8 +11,8 @@ Opening that patch runs `git push rad HEAD:refs/patches` on the trusted side.
 A host who delegates the RID reviews the patch, runs the sandbox check, and
 accepts or refuses it. None of those is recorded until `rad sync` reports that
 another node received the repository. A missing `rad`, a stopped node, a
-failed sync, or a sandbox that did not run is not an acceptance and is not a
-refusal.
+failed sync, a sandbox that did not run, or a check that discovered no tests
+is not an acceptance and is not a refusal.
 """
 
 from __future__ import annotations
@@ -533,11 +533,35 @@ def open_patch(home: Path, raw: str, title: str, body: str, checkout: str) -> Fo
     return ForgeResult(True, f"opened patch {match.group(1)} on {rid}")
 
 
+_TESTS_RUN = re.compile(r"(?m)^tests_run=([0-9]+)\s*$")
+
+
+def _tests_ran(stdout: str) -> int | None:
+    found = _TESTS_RUN.findall(stdout or "")
+    if not found:
+        return None
+    return int(found[-1])
+
+
+def _check_report(stdout: str) -> str:
+    """Sandbox stdout with passphrase lines and private-key banners removed."""
+    secret = os.environ.get("RAD_PASSPHRASE", "")
+    lines = []
+    for line in scrub_secrets(_plain(stdout or "")).splitlines():
+        if "PRIVATE KEY" in line or "RAD_PASSPHRASE" in line:
+            continue
+        if secret and secret in line:
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def review_patch(home: Path, raw: str, raw_id: str, checkout: str) -> ForgeResult:
     """Run the sandbox check on a contributor patch, then accept or refuse it.
 
     The Radicle key is not passed into the sandbox. A sandbox that does not
-    run does not accept the patch and does not refuse it.
+    run, or that discovers no tests, does not accept the patch and does not
+    refuse it.
     """
     patch_id = parse_cob_id(raw_id)
     if patch_id is None:
@@ -580,6 +604,10 @@ def review_patch(home: Path, raw: str, raw_id: str, checkout: str) -> ForgeResul
     )
     if not outcome.invoked:
         return ForgeResult(False, "the sandbox did not run the check")
+    report = _check_report(outcome.stdout)
+    ran = _tests_ran(outcome.stdout)
+    if ran is None or ran < 1:
+        return ForgeResult(False, "the sandbox check did not run any tests", report)
     verdict = "accept" if outcome.ok else "reject"
     message = "sandbox check passed" if outcome.ok else "sandbox check failed"
     reviewed = _run(
@@ -603,8 +631,8 @@ def review_patch(home: Path, raw: str, raw_id: str, checkout: str) -> ForgeResul
     if blocked is not None:
         return blocked
     if verdict == "accept":
-        return ForgeResult(True, f"accepted patch {patch_id} on {rid}")
-    return ForgeResult(True, f"refused patch {patch_id} on {rid}")
+        return ForgeResult(True, f"accepted patch {patch_id} on {rid}", report)
+    return ForgeResult(True, f"refused patch {patch_id} on {rid}", report)
 
 
 def _draft(home: Path, rid: str, filename: str) -> tuple[str, str] | None:

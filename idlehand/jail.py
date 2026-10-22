@@ -3,7 +3,8 @@
 The command sees a private copy of its own binary and libraries, a tmpfs /tmp,
 null/zero/urandom, and the repo workspace mounted at /work. The user's home,
 credentials, and the rest of the host filesystem are not mounted. There is no
-network. The environment is replaced before exec.
+route outside the jail. Loopback inside the jail is up so a test can bind
+127.0.0.1; that address is not the host. The environment is replaced before exec.
 
 This process must be started on its own, not forked from the multithreaded node.
 """
@@ -131,6 +132,74 @@ def _stdlib_path(binary: Path) -> Path | None:
     return None
 
 
+def _stage_tree(root: Path, source: Path) -> None:
+    if not source.is_dir() or source.is_symlink():
+        return
+    destination = root / source.relative_to("/")
+    shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=True)
+
+
+def _stage_program(root: Path, path: Path) -> None:
+    if not path.exists():
+        return
+    _stage_lookup(root, path)
+    resolved = path.resolve()
+    if resolved.is_file() and not resolved.is_symlink():
+        for library in _ldd_paths(resolved):
+            _stage_lookup(root, library)
+
+
+def _stage_extension_libs(root: Path, stdlib: Path) -> None:
+    """Python extension modules load libraries ldd does not list for the interpreter."""
+    for path in stdlib.rglob("*.so"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        for library in _ldd_paths(path):
+            _stage_lookup(root, library)
+
+
+def _stage_git(root: Path) -> None:
+    """Stage git so a repository's own tests can init and commit inside the jail."""
+    for program in (
+        "/usr/bin/git",
+        "/bin/sh",
+        "/bin/bash",
+        "/usr/bin/ldd",
+        "/usr/bin/env",
+        "/bin/cat",
+        "/usr/bin/true",
+        "/bin/false",
+        "/bin/mkdir",
+        "/bin/rm",
+        "/usr/bin/touch",
+        "/bin/ls",
+        "/bin/sleep",
+    ):
+        _stage_program(root, Path(program))
+    _stage_tree(root, Path("/usr/lib/git-core"))
+    _stage_tree(root, Path("/usr/share/git-core"))
+
+
+def _raise_loopback() -> None:
+    """Bring up lo in this network namespace. It does not add a route out."""
+    import fcntl
+    import socket
+    import struct
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        request = struct.pack("16s", b"lo") + bytes(24)
+        try:
+            current = fcntl.ioctl(sock.fileno(), 0x8913, request)
+            flags = struct.unpack_from("H", current, 16)[0]
+            updated = struct.pack("16sH", b"lo", flags | 0x1) + bytes(22)
+            fcntl.ioctl(sock.fileno(), 0x8914, updated)
+        except OSError as exc:
+            raise JailError(f"loopback did not come up: {exc}") from exc
+    finally:
+        sock.close()
+
+
 def _stage_runtime(root: Path, command: list[str]) -> None:
     binary = Path(command[0])
     if not binary.is_absolute():
@@ -151,6 +220,18 @@ def _stage_runtime(root: Path, command: list[str]) -> None:
     if stdlib is not None:
         destination = root / stdlib.relative_to("/")
         shutil.copytree(stdlib, destination, symlinks=True, dirs_exist_ok=True)
+        _stage_extension_libs(root, stdlib)
+        _stage_git(root)
+
+
+def _reap(pid: int) -> None:
+    """Wait for the jailed child and exit with its status. Does not return."""
+    try:
+        _pid, status = os.waitpid(pid, 0)
+    except OSError:
+        os._exit(1)
+    code = os.waitstatus_to_exitcode(status)
+    os._exit(code if code >= 0 else 1)
 
 
 def _remount_readonly(path: Path) -> None:
@@ -177,7 +258,7 @@ def enter_and_exec(workspace: Path, command: list[str]) -> None:
     jail = Path(os.path.abspath(os.path.join(os.sep, "tmp", f"idlehand-jail-{os.getpid()}")))
     jail.mkdir(mode=0o700, exist_ok=False)
     try:
-        flags = os.CLONE_NEWUSER | os.CLONE_NEWNS | os.CLONE_NEWNET | os.CLONE_NEWIPC | os.CLONE_NEWUTS
+        flags = os.CLONE_NEWUSER | os.CLONE_NEWNS | os.CLONE_NEWNET | os.CLONE_NEWIPC | os.CLONE_NEWUTS | os.CLONE_NEWPID
         os.unshare(flags)
         with open("/proc/self/setgroups", "w", encoding="utf-8") as handle:
             handle.write("deny")
@@ -185,12 +266,22 @@ def enter_and_exec(workspace: Path, command: list[str]) -> None:
             handle.write(f"0 {uid} 1\n")
         with open("/proc/self/gid_map", "w", encoding="utf-8") as handle:
             handle.write(f"0 {gid} 1\n")
+        _raise_loopback()
+        # The caller stays in the old pid namespace. The child is pid 1 in the
+        # new one, so a private /proc cannot see the host's processes.
+        child = os.fork()
+        if child > 0:
+            _reap(child)
         _mount(None, "/", None, MS_REC | MS_PRIVATE)
         _mount("tmpfs", str(jail), "tmpfs", MS_NOSUID | MS_NODEV, "size=512m")
         _stage_runtime(jail, command)
-        for name in ("work", "tmp", "oldroot", "dev"):
+        for name in ("work", "tmp", "var", "proc", "oldroot", "dev"):
             (jail / name).mkdir(exist_ok=True)
+        _mount("proc", str(jail / "proc"), "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC)
+        (jail / "var" / "tmp").mkdir(exist_ok=True)
         _mount("tmpfs", str(jail / "tmp"), "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "size=64m")
+        # Test helpers are scripts under TMPDIR. /tmp stays noexec; this one does not.
+        _mount("tmpfs", str(jail / "var" / "tmp"), "tmpfs", MS_NOSUID | MS_NODEV, "size=256m")
         _mount(str(workspace), str(jail / "work"), None, MS_BIND)
         for device in ("null", "zero", "urandom"):
             target = jail / "dev" / device
@@ -212,8 +303,8 @@ def enter_and_exec(workspace: Path, command: list[str]) -> None:
         _LIBC.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
         env = {
             "PATH": "/usr/bin:/bin",
-            "HOME": "/tmp",
-            "TMPDIR": "/tmp",
+            "HOME": "/home/idlehand",
+            "TMPDIR": "/var/tmp",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         os.execve(command[0], command, env)

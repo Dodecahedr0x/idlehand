@@ -6,28 +6,12 @@ credentials. These commands prepare local results. They do not push.
 
 from __future__ import annotations
 
-TEST_SCRIPT = """
-import pathlib, sys, unittest
-sys.path.insert(0, "/work")
-root = pathlib.Path("/work")
-syntax_errors = 0
-for path in root.rglob("*.py"):
-    if path.is_symlink() or any(part in {".git", ".idlehand"} for part in path.parts):
-        continue
-    try:
-        compile(path.read_text(encoding="utf-8", errors="replace"), str(path), "exec")
-    except SyntaxError as exc:
-        syntax_errors += 1
-        print(f"syntax {path.relative_to(root)}: {exc}")
-    except OSError:
-        continue
-print(f"syntax_errors={syntax_errors}")
-suite = unittest.defaultTestLoader.discover("/work", pattern="test*.py", top_level_dir="/work")
-result = unittest.TextTestRunner(verbosity=1).run(suite)
-print(f"tests_run={result.testsRun}")
-print("idlehand-action=test")
-sys.exit(0 if syntax_errors == 0 and result.wasSuccessful() else 1)
-"""
+from pathlib import Path
+
+# The jail runs this text with `python -c`. `python -c` sets __name__ to
+# __main__, so repo_check.main runs. Collection matches pytest, including a
+# tests directory that has no __init__.py. Discovering nothing is not a pass.
+TEST_SCRIPT = Path(__file__).with_name("repo_check.py").read_text(encoding="utf-8")
 
 AUDIT_SCRIPT = """
 import pathlib, sys

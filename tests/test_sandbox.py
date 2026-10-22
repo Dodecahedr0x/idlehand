@@ -19,6 +19,19 @@ print("HOME_DIR", pathlib.Path("/home").exists())
 print("ETC", pathlib.Path("/etc").exists())
 print("SECRET_ENV", "ANTHROPIC_API_KEY" in os.environ or "GH_TOKEN" in os.environ)
 print("HOST_SECRET", pathlib.Path({str(secret)!r}).exists())
+leaked = False
+proc = pathlib.Path("/proc")
+if proc.is_dir():
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            text = (entry / "environ").read_bytes()
+        except OSError:
+            continue
+        if b"sk-test-secret" in text or b"gh-secret" in text:
+            leaked = True
+print("PROC_LEAK", leaked)
 print("ROOT", ",".join(sorted(os.listdir("/"))))
 try:
     pathlib.Path("/usr/bin/pwned-idlehand").write_text("x")
@@ -41,6 +54,7 @@ print("idlehand-sandbox-ok")
     assert "HOME_DIR False" in result.stdout
     assert "ETC False" in result.stdout
     assert "SECRET_ENV False" in result.stdout
+    assert "PROC_LEAK False" in result.stdout
     assert "HOST_SECRET False" in result.stdout
     assert "sk-test-secret" not in result.stdout
     assert "USR_WRITE yes" not in result.stdout
@@ -180,6 +194,44 @@ def test_credential_image_is_not_passed_to_the_runtime(tmp_path: Path) -> None:
     assert "sekret" not in stored
     assert "password=" not in stored
     assert not workspace.exists()
+
+
+def test_namespace_runs_tests_in_a_directory_without_init(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    nested = workspace / "tests"
+    nested.mkdir(parents=True)
+    (nested / "test_marked.py").write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize('value', [2])\n"
+        "def test_marked(value):\n"
+        "    assert value == 2\n"
+        "\n"
+        "def test_raises():\n"
+        "    with pytest.raises(ValueError, match='nope'):\n"
+        "        raise ValueError('nope')\n",
+        encoding="utf-8",
+    )
+    from idlehand.actions import action_command
+
+    result = run_namespace(workspace, action_command("test", "namespace"), timeout=90)
+    assert result.invoked, result.reason
+    assert "PASS tests/test_marked.py::test_marked" in result.stdout
+    assert "PASS tests/test_marked.py::test_raises" in result.stdout
+    assert "tests_run=2" in result.stdout
+    assert result.ok, result.stdout + result.stderr
+
+
+def test_namespace_with_no_tests_is_not_a_pass(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / "readme.txt").write_text("nothing to run\n", encoding="utf-8")
+    from idlehand.actions import action_command
+
+    result = run_namespace(workspace, action_command("test", "namespace"), timeout=90)
+    assert result.invoked, result.reason
+    assert "tests_run=0" in result.stdout
+    assert result.ok is False
 
 
 def test_unknown_runtime_is_not_echoed() -> None:

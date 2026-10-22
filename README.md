@@ -125,7 +125,7 @@ idlehand rad issue create rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --title "Broken link
 idlehand rad patch open rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --path /path/to/checkout --title "Fix the link" --body "Updates the README."
 ```
 
-The host delegates the RID, checks the patch out, and runs the sandbox test. A passing check accepts the patch. A failing check refuses it. IdleHand records that verdict only after `rad sync` replicates it. If `rad` is missing, the node is stopped, the sync reaches no other node, or the sandbox does not run, IdleHand does not accept the patch and does not refuse it.
+The host delegates the RID, checks the patch out, and runs the sandbox test. That check runs the repository's own tests, the same ones pytest runs, including a `tests` directory with no `__init__.py`. A check that ran tests and passed accepts the patch. A check that ran tests and failed refuses it. IdleHand records that verdict only after `rad sync` replicates it. If `rad` is missing, the node is stopped, the sync reaches no other node, the sandbox does not run, or the check discovers no tests, IdleHand does not accept the patch and does not refuse it.
 
 ```bash
 idlehand rad patch check rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2 --path /path/to/checkout
@@ -153,7 +153,7 @@ idlehand github pr create octocat/hello --title "Fix the link" --body "Updates t
 
 ## Sandbox
 
-Repository commands run in a container when Docker or Podman is installed. Otherwise IdleHand uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no network, and a cleared environment. Home, credentials, and the rest of the host filesystem are not mounted. If no runtime can start, IdleHand refuses the command instead of running it on the host.
+Repository commands run in a container when Docker or Podman is installed. Otherwise IdleHand uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no route outside the jail, and a cleared environment. Loopback inside the jail is up so a test can bind `127.0.0.1`; that address is not the host. Home, credentials, and the rest of the host filesystem are not mounted. The test command runs the repository's tests. A run that discovers none is not a pass. If no runtime can start, IdleHand refuses the command instead of running it on the host.
 
 The contribution loop clones one repository from the local source list, then runs the action in that sandbox. The clone itself stays outside the sandbox: public http(s) URLs, or a local path the source list already names. SSH URLs and URLs with embedded credentials are refused. Subscription CLIs stay outside the sandbox. Their credentials are not copied into it.
 
