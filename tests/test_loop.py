@@ -1375,6 +1375,29 @@ def test_quoted_sandbox_execute_does_not_run(tmp_path: Path, monkeypatch) -> Non
     assert list((home / "workspaces").iterdir()) == []
 
 
+def test_unknown_sandbox_runtime_is_not_stored_or_cloned(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "password=sekret"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["contributed"] is False
+    assert plan["upstream_cloned"] is False
+    assert plan["sandbox"]["invoked"] is False
+    assert plan["sandbox"]["reason"] == "sandbox runtime is unreadable"
+    assert state["loop"]["reason"] == "sandbox runtime is unreadable"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert list((home / "workspaces").iterdir()) == []
+    stored = (home / "state.json").read_text(encoding="utf-8")
+    assert "sekret" not in stored
+    assert "password=" not in stored
+
+
 def test_quoted_false_rule_does_not_run_the_action(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)

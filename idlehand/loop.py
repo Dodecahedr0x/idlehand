@@ -394,14 +394,33 @@ def _prepare_cycle(
             command = claude_argv(status.binary, recorded_url, action)
         else:
             command = subscription_command(status.name, status.binary, recorded_url, action)
-    configured_runtime = str(config["sandbox"]["runtime"])
-    runtime = detect_runtime(configured_runtime)
+    sandbox_cfg = config.get("sandbox")
+    if isinstance(sandbox_cfg, dict) and "runtime" not in sandbox_cfg:
+        raw_runtime: object = "auto"
+    elif isinstance(sandbox_cfg, dict):
+        raw_runtime = sandbox_cfg.get("runtime")
+        if raw_runtime == "":
+            raw_runtime = "auto"
+    else:
+        raw_runtime = None
+    runtime_known = isinstance(raw_runtime, str) and raw_runtime in {
+        "auto",
+        "none",
+        "docker",
+        "podman",
+        "namespace",
+        "bwrap",
+    }
+    configured_runtime = raw_runtime if runtime_known else "auto"
+    runtime = detect_runtime(configured_runtime) if runtime_known else None
     refusal = ""
     execute = _rule_flag(config.get("sandbox"), "execute", True)
     if execute is None:
         refusal = "sandbox execution is unreadable"
     elif not execute:
         refusal = "sandbox execution is off"
+    elif not runtime_known:
+        refusal = "sandbox runtime is unreadable"
     elif runtime is None:
         refusal = "no sandbox runtime is available; refused to run on the host"
     return {

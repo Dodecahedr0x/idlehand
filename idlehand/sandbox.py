@@ -55,11 +55,18 @@ class SandboxResult:
         }
 
 
+_KNOWN_RUNTIMES = {"auto", "none", "docker", "podman", "namespace", "bwrap"}
+
+
 def detect_runtime(configured: str = "auto") -> str | None:
+    if not isinstance(configured, str):
+        return None
     choice = configured or "auto"
     if choice == "none":
         return None
     if choice != "auto":
+        if choice not in _KNOWN_RUNTIMES:
+            return None
         return choice
     for name in ("docker", "podman"):
         if shutil.which(name):
@@ -324,7 +331,8 @@ def run(
 ) -> SandboxResult:
     chosen = detect_runtime(runtime)
     if chosen is None:
-        return _refused(runtime, "no sandbox runtime is available; refused to run on the host", command)
+        label = runtime if isinstance(runtime, str) and runtime in _KNOWN_RUNTIMES else "none"
+        return _refused(label, "no sandbox runtime is available; refused to run on the host", command)
     if workspace.is_symlink() or workspace.parent.is_symlink():
         return _refused(runtime, "refusing to follow a workspace symlink", command)
     workspace.mkdir(parents=True, exist_ok=True)
@@ -340,4 +348,4 @@ def run(
         except SandboxError as exc:
             return _refused("bwrap", str(exc), command)
         return run_external("bwrap", build_bwrap_argv(workspace, mapped), timeout=timeout)
-    return _refused(chosen, f"unknown sandbox runtime {chosen}", command)
+    return _refused("none", "sandbox runtime is unreadable", command)

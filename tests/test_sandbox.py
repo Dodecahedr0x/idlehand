@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from idlehand.sandbox import build_bwrap_argv, build_container_argv, run, run_namespace
+from idlehand.sandbox import build_bwrap_argv, build_container_argv, detect_runtime, run, run_namespace
 
 
 def test_namespace_hides_home_credentials_and_network(tmp_path: Path, monkeypatch) -> None:
@@ -163,3 +163,15 @@ def test_fake_docker_is_not_asked_to_run_on_the_host(tmp_path: Path, monkeypatch
     assert "none" in recorded
     assert str(workspace.resolve()) in recorded
     assert "docker.sock" not in recorded
+
+
+def test_unknown_runtime_is_not_echoed() -> None:
+    assert detect_runtime("namespace") == "namespace"
+    assert detect_runtime("none") is None
+    assert detect_runtime("password=sekret") is None
+    workspace = Path("/tmp/idlehand-runtime-unreadable")
+    result = run(workspace, ["/usr/bin/python3", "-c", "print('no')"], runtime="password=sekret")
+    assert result.invoked is False
+    assert result.runtime == "none"
+    assert "sekret" not in result.reason
+    assert "password=" not in result.reason
