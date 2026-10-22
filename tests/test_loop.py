@@ -1311,6 +1311,48 @@ def test_audit_still_runs_when_idlehand_dir_is_a_file(tmp_path: Path, monkeypatc
     assert "idlehand-action=audit" in plan["sandbox"]["stdout"]
 
 
+def test_quoted_false_rule_does_not_run_the_action(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 30
+    config["rules"]["allow_test"] = "false"
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["loop"]["reason"] == "a contribution rule is unreadable"
+    assert list((home / "workspaces").iterdir()) == []
+    config["rules"]["allow_test"] = True
+    save_config(home, config)
+    state = tick(home)
+    assert [plan["action"] for plan in state["plans"]] == ["test"]
+    assert state["plans"][0]["contributed"] is True
+
+
+def test_unreadable_auto_start_does_not_begin_a_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["auto_start"] = "false"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["reason"] == "auto start is unreadable"
+    assert state["ledger"]["estimated_tokens"] == 0
+
+
 def test_unreadable_peer_fetch_interval_still_contributes(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)

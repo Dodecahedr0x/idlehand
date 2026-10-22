@@ -186,8 +186,26 @@ def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def _enabled_actions(rules: dict[str, Any]) -> list[str]:
-    return [name for name, flag in ACTIONS if rules.get(flag, False)]
+def _rule_flag(rules: dict[str, Any], name: str, default: bool) -> bool | None:
+    """A real boolean, or None when the setting is present but not true or false."""
+    if not isinstance(rules, dict) or name not in rules:
+        return default
+    value = rules[name]
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _enabled_actions(rules: dict[str, Any]) -> tuple[list[str], bool]:
+    enabled: list[str] = []
+    unreadable = False
+    for name, flag in ACTIONS:
+        value = _rule_flag(rules, flag, False)
+        if value is None:
+            unreadable = True
+        elif value:
+            enabled.append(name)
+    return enabled, unreadable
 
 
 def _workspace(home: Path, repo_url: str) -> Path:
@@ -350,18 +368,21 @@ def _prepare_cycle(
         state["loop"]["status"] = "stopped"
         state["loop"]["reason"] = "spending limit reached"
         return None
-    if not demo and not rules.get("auto_start", True):
-        state["loop"]["status"] = "idle"
-        state["loop"]["reason"] = "auto start is off"
+    auto = _rule_flag(rules, "auto_start", True)
+    if not demo and auto is not True:
+        state["loop"]["status"] = "idle" if auto is False else "stopped"
+        state["loop"]["reason"] = "auto start is off" if auto is False else "auto start is unreadable"
         return None
-    actions = _enabled_actions(rules)
+    actions, unreadable = _enabled_actions(rules)
     if not sources:
         state["loop"]["status"] = "idle"
         state["loop"]["reason"] = "the local source list is empty"
         return None
     if not actions:
-        state["loop"]["status"] = "idle"
-        state["loop"]["reason"] = "every contribution action is turned off"
+        state["loop"]["status"] = "idle" if not unreadable else "stopped"
+        state["loop"]["reason"] = (
+            "a contribution rule is unreadable" if unreadable else "every contribution action is turned off"
+        )
         return None
     repo_url = sources[cycles % len(sources)]["url"]
     recorded_url = public_url(repo_url) or "list entry"
