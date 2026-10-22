@@ -373,6 +373,11 @@ def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
             missing_code = 200
         except urllib.error.HTTPError as exc:
             missing_code = exc.code
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/fossah/publish", timeout=2)
+            old_code = 200
+        except urllib.error.HTTPError as exc:
+            old_code = exc.code
     finally:
         server.shutdown()
         server.server_close()
@@ -381,6 +386,7 @@ def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
     assert "secret-decision" not in body
     assert "metered_tokens" not in body
     assert missing_code == 404
+    assert old_code == 404
 
 
 def test_local_clone_and_non_repo(tmp_path: Path) -> None:

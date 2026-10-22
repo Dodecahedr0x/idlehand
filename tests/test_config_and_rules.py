@@ -27,6 +27,16 @@ def test_defaults_are_open_and_small(tmp_path: Path) -> None:
     assert all(repo["url"].startswith("https://example.com/idlehand/") for repo in repos)
 
 
+def test_home_path_follows_the_product_name(tmp_path: Path, monkeypatch) -> None:
+    from idlehand.home import resolve_home
+
+    monkeypatch.delenv("IDLEHAND_HOME", raising=False)
+    monkeypatch.setattr("idlehand.home.Path.home", classmethod(lambda cls: tmp_path))
+    assert resolve_home(None) == (tmp_path / ".idlehand").resolve()
+    monkeypatch.setenv("IDLEHAND_HOME", str(tmp_path / "custom"))
+    assert resolve_home(None) == (tmp_path / "custom").resolve()
+
+
 def test_limit_roundtrip(tmp_path: Path) -> None:
     home = tmp_path / "home"
     config = ensure_home(home)

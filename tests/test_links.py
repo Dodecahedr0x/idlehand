@@ -314,3 +314,18 @@ def test_encoded_link_text_is_not_stored(tmp_path: Path) -> None:
     assert "PRIVATE KEY" not in blob
     assert "BEGIN" not in blob
     assert "unsupported IdleHand link action" in blob
+
+
+def test_former_link_scheme_is_refused(tmp_path: Path) -> None:
+    from idlehand.analytics import render_text
+
+    home = tmp_path / "home"
+    ensure_home(home)
+    with pytest.raises(LinkError, match="not an IdleHand link"):
+        apply_link(home, "fossah://add?repo=https://github.com/pallets/click")
+    sources = (home / "sources.toml").read_text(encoding="utf-8")
+    assert "pallets/click" not in sources
+    text = render_text(home)
+    assert text.startswith("IdleHand\n")
+    assert "not an IdleHand link" in text
+    assert "refused link" in text
