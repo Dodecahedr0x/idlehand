@@ -6,27 +6,14 @@ decision and the reason so analytics can show it.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fossah.fetch import redact_clone_url
+from fossah.fetch import scrub_secrets
 from fossah.home import home_lock, read_json, write_json
 
 MAX_DECISIONS = 20
-_USERINFO = re.compile(r"://[^/\s:@]+:[^/\s@]+@")
-_NESTED_CREDENTIAL = re.compile(
-    r"[?&#](?:token|password|access_token|auth)=[^&\s#]*",
-    re.IGNORECASE,
-)
-
-
-def scrub_secrets(text: str) -> str:
-    """Drop userinfo and credential query keys, including inside a wrapped URL."""
-    cleaned = _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(text)))
-    cleaned = re.sub(r"\?&+", "?", cleaned)
-    return re.sub(r"[?&]+$", "", cleaned)
 
 
 def now_iso() -> str:

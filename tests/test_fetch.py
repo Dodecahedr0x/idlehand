@@ -158,6 +158,25 @@ def test_clone_timeout_removes_a_partial_workspace(tmp_path: Path) -> None:
     assert not workspace.exists()
 
 
+def test_clone_failure_does_not_keep_a_credential_from_git_output(tmp_path: Path) -> None:
+    git = tmp_path / "git"
+    git.write_text(
+        "#!/bin/sh\n"
+        "echo 'fatal: https://user:sekret@github.com/org/repo.git' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    git.chmod(git.stat().st_mode | stat.S_IEXEC)
+    result = clone_repository(
+        "https://github.com/org/repo.git",
+        tmp_path / "workspaces" / "repo",
+        git_executable=str(git),
+    )
+    assert result.cloned is False
+    assert "sekret" not in result.reason
+    assert "fatal:" in result.reason
+
+
 def test_symlink_workspace_is_not_replaced(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()

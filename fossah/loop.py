@@ -24,7 +24,7 @@ from fossah.config import (
     save_peers,
     state_path,
 )
-from fossah.fetch import clone_repository, embeds_credentials, redact_clone_url
+from fossah.fetch import clone_repository, embeds_credentials, redact_clone_url, scrub_secrets
 from fossah.home import home_lock, read_json, write_json
 from fossah.peers import (
     PeerCandidate,
@@ -250,7 +250,7 @@ def _fetch_peers(
             document = load_peer_document(url)
             key = normalize_peer_url(url)
         except ValueError as exc:
-            errors.append(f"{url}: {exc}")
+            errors.append(scrub_secrets(f"{url}: {exc}")[:300])
             continue
         documents[key] = document
         ignored += count_remote_repos(document)

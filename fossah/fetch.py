@@ -9,6 +9,7 @@ list already names it. SSH and embedded passwords are refused.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -63,6 +64,20 @@ def redact_clone_url(url: str) -> str:
     if _has_credential_key(parsed.fragment):
         parsed = parsed._replace(fragment=_without_credential_keys(parsed.fragment))
     return urllib.parse.urlunsplit(parsed)
+
+
+_USERINFO = re.compile(r"://[^/\s:@]+:[^/\s@]+@")
+_NESTED_CREDENTIAL = re.compile(
+    r"[?&#](?:token|password|access_token|auth)=[^&\s#]*",
+    re.IGNORECASE,
+)
+
+
+def scrub_secrets(text: str) -> str:
+    """Drop userinfo and credential query keys, including inside a wrapped URL."""
+    cleaned = _NESTED_CREDENTIAL.sub("", _USERINFO.sub("://", redact_clone_url(text)))
+    cleaned = re.sub(r"\?&+", "?", cleaned)
+    return re.sub(r"[?&]+$", "", cleaned)
 
 
 def classify_clone_url(url: str) -> tuple[str | None, str]:
@@ -178,7 +193,7 @@ def clone_repository(
         shutil.rmtree(empty_home, ignore_errors=True)
     if completed.returncode != 0 or not (workspace / ".git").exists():
         detail = (completed.stderr or completed.stdout or "git clone failed").strip().splitlines()
-        summary = detail[-1][:200] if detail else "git clone failed"
+        summary = scrub_secrets(detail[-1])[:200] if detail else "git clone failed"
         _remove_failed_clone(workspace)
         return FetchResult(False, summary)
     return FetchResult(True, reason)
