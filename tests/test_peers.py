@@ -123,6 +123,21 @@ def test_review_explains_each_peer_and_does_not_import_repos() -> None:
     )
     assert closed == []
     assert closed_decisions[0]["reason"] == "second-degree peers must use https"
+    many = {
+        "https://direct.example/p": {
+            "peers": [{"url": f"https://peer-{index}.example/p"} for index in range(3)]
+        }
+    }
+    kept, kept_decisions = review_second_degree(
+        self_id="self",
+        self_urls=set(),
+        direct_peers=[{"url": "https://direct.example/p"}],
+        documents=many,
+        existing_urls=set(),
+        heuristic={**HEURISTIC, "max_new_peers_per_cycle": 1},
+    )
+    assert len(kept) == 1
+    assert sum(item["reason"] == "the peer cap was reached" for item in kept_decisions) == 2
 
 
 def test_user_added_peer_skips_the_second_degree_check(tmp_path) -> None:

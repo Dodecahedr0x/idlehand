@@ -245,9 +245,13 @@ def apply_link(home: Path, url: str) -> LinkApply:
     decisions: list[dict[str, object]] = []
     if parsed.list_url:
         try:
-            judged.extend(judge_list_text(fetch_text(parsed.list_url)))
+            listed = judge_list_text(fetch_text(parsed.list_url))
         except LinkError as exc:
             decisions.append(decision("link", parsed.list_url, False, str(exc)))
+        else:
+            if not listed:
+                decisions.append(decision("link", parsed.list_url, False, "the list file has no repositories"))
+            judged.extend(listed)
     known = {_normalize_repo(repo["url"]) for repo in load_sources(home)}
     fresh: list[str] = []
     for accepted, cleaned, reason in judged:

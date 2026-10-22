@@ -663,6 +663,62 @@ def test_usage_on_stderr_is_not_treated_as_a_report(tmp_path: Path, monkeypatch)
     assert "99" not in json.dumps(state["ledger"])
 
 
+def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["rules"]["allow_test"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    url = _local_source(home, tmp_path, {"readme.txt": "hello\n"})
+    secret = tmp_path / "host-secret"
+    secret.write_text("BEGIN PRIVATE KEY\nhost-only-material\n", encoding="utf-8")
+    leak = tmp_path / "sample" / "leak.txt"
+    leak.symlink_to(secret)
+    subprocess.run(
+        ["git", "add", "leak.txt"],
+        cwd=tmp_path / "sample",
+        check=True,
+        capture_output=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "fossah",
+            "GIT_AUTHOR_EMAIL": "fossah@example.com",
+            "GIT_COMMITTER_NAME": "fossah",
+            "GIT_COMMITTER_EMAIL": "fossah@example.com",
+        },
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "leak"],
+        cwd=tmp_path / "sample",
+        check=True,
+        capture_output=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "fossah",
+            "GIT_AUTHOR_EMAIL": "fossah@example.com",
+            "GIT_COMMITTER_NAME": "fossah",
+            "GIT_COMMITTER_EMAIL": "fossah@example.com",
+        },
+    )
+    state = tick(home)
+    plan = state["plans"][0]
+    blob = json.dumps(plan["sandbox"])
+    assert "host-only-material" not in blob
+    assert secret.read_text(encoding="utf-8").startswith("BEGIN PRIVATE KEY")
+    assert url.startswith("file:")
+
+
 def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)

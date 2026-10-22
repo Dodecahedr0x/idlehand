@@ -127,6 +127,30 @@ def test_list_file_keeps_good_lines_and_catalog_is_recorded(tmp_path: Path) -> N
     assert len(load_trust(home)) == MAX_DECISIONS
 
 
+def test_empty_list_and_mixed_json_are_visible(tmp_path: Path) -> None:
+    from fossah.trust import load_trust
+
+    empty = tmp_path / "empty.txt"
+    empty.write_text("# nothing here\n\n", encoding="utf-8")
+    home = tmp_path / "home"
+    ensure_home(home)
+    before = [repo["url"] for repo in load_sources(home)]
+    with pytest.raises(LinkError, match="no repositories"):
+        apply_link(home, f"fossah://add?list={empty.as_uri()}")
+    assert [repo["url"] for repo in load_sources(home)] == before
+    assert any(item["reason"] == "the list file has no repositories" for item in load_trust(home))
+    mixed = tmp_path / "mixed.json"
+    mixed.write_text(
+        json.dumps({"repos": [{"url": "https://github.com/encode/httpx"}, {"name": "missing"}, "ftp://example.com/nope"]}),
+        encoding="utf-8",
+    )
+    added = apply_link(home, f"fossah://add?list={mixed.as_uri()}")
+    assert added == ["https://github.com/encode/httpx"]
+    reasons = [item["reason"] for item in load_trust(home) if not item["accepted"]]
+    assert any("needs a URL" in reason for reason in reasons)
+    assert any("http or https" in reason for reason in reasons)
+
+
 def test_redirected_list_is_refused(tmp_path: Path) -> None:
     from fossah.trust import load_trust
 
