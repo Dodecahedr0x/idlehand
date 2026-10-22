@@ -711,7 +711,14 @@ def test_planner_timeout_keeps_the_estimate(tmp_path: Path, monkeypatch) -> None
     invoked = tmp_path / "claude-invoked"
     script = tmp_path / "bin" / "claude"
     script.parent.mkdir()
-    script.write_text(f"#!/bin/sh\necho started >> '{invoked}'\nsleep 5\necho finished >> '{invoked}'\n", encoding="utf-8")
+    script.write_text(
+        "#!/bin/sh\n"
+        f"echo started >> '{invoked}'\n"
+        "printf 'sk-timeout-secret' > \"$PWD/leak.txt\"\n"
+        "sleep 5\n"
+        f"echo finished >> '{invoked}'\n",
+        encoding="utf-8",
+    )
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{script.parent}:/usr/bin:/bin")
     monkeypatch.setattr("fossah.usage.PLAN_TIMEOUT", 0.2)
@@ -734,6 +741,58 @@ def test_planner_timeout_keeps_the_estimate(tmp_path: Path, monkeypatch) -> None
     assert state["ledger"]["estimated_tokens"] == 17
     assert state["ledger"]["metered_tokens"] == 0
     assert state["plans"][0]["contributed"] is True
+    assert "sk-timeout-secret" not in (home / "state.json").read_text(encoding="utf-8")
+    assert not (home / "planner").exists()
+    leftover = " ".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in home.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    )
+    assert "sk-timeout-secret" not in leftover
+
+
+def test_sandbox_timeout_still_records_the_command_that_started(tmp_path: Path, monkeypatch) -> None:
+    import fossah.loop as loop_module
+
+    home = tmp_path / "home"
+    _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    config["estimate_tokens_per_cycle"] = 19
+    config["rules"]["allow_audit"] = False
+    config["rules"]["allow_issues"] = False
+    config["rules"]["allow_pull_requests"] = False
+    save_config(home, config)
+    _local_source(
+        home,
+        tmp_path,
+        {
+            "test_slow.py": (
+                "import time\n"
+                "import unittest\n"
+                "class Slow(unittest.TestCase):\n"
+                "    def test_slow(self):\n"
+                "        time.sleep(30)\n"
+            ),
+        },
+    )
+    original = loop_module.run
+
+    def limited(workspace, command, **kwargs):
+        kwargs["timeout"] = 0.2
+        return original(workspace, command, **kwargs)
+
+    monkeypatch.setattr(loop_module, "run", limited)
+    state = tick(home)
+    plan = state["plans"][0]
+    assert plan["sandbox"]["invoked"] is True
+    assert plan["sandbox"]["reason"] == "sandbox timed out"
+    assert plan["contributed"] is True
+    assert plan["pushed"] is False
+    assert plan["usage"] == "estimate"
+    assert state["ledger"]["estimated_tokens"] == 19
 
 
 def test_reported_tokens_stay_on_the_ledger_when_the_sandbox_fails(tmp_path: Path, monkeypatch) -> None:
