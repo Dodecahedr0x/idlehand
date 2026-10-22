@@ -73,20 +73,31 @@ def explain_peer_url(url: str, heuristic: dict[str, Any]) -> tuple[bool, str]:
         return False, str(exc)
     scheme = _scheme_of(normalized)
     host = _host_of(normalized)
+    allow_loopback = heuristic.get("allow_insecure_loopback", True)
+    require_https = heuristic.get("require_https", True)
+    blocked_raw = heuristic.get("blocked_hosts", [])
+    allowed_raw = heuristic.get("allowed_hosts", [])
+    hosts_ok = (
+        isinstance(blocked_raw, list)
+        and isinstance(allowed_raw, list)
+        and all(isinstance(item, str) for item in [*blocked_raw, *allowed_raw])
+    )
+    if not isinstance(allow_loopback, bool) or not isinstance(require_https, bool) or not hosts_ok:
+        return False, "peer heuristic is unreadable"
     if scheme == "file":
         return False, "second-degree file URLs are not added"
-    blocked = {item.lower() for item in heuristic.get("blocked_hosts", [])}
+    blocked = {item.lower() for item in blocked_raw}
     if host in blocked:
         return False, "host is blocked"
-    allowed = {item.lower() for item in heuristic.get("allowed_hosts", [])}
+    allowed = {item.lower() for item in allowed_raw}
     if allowed and host not in allowed:
         return False, "host is not in allowed_hosts"
     loopback = host in LOOPBACK_HOSTS
     if scheme == "https":
         return True, "https peer URL"
-    if scheme == "http" and loopback and heuristic.get("allow_insecure_loopback", True):
+    if scheme == "http" and loopback and allow_loopback:
         return True, "http is allowed for loopback"
-    if scheme == "http" and not heuristic.get("require_https", True):
+    if scheme == "http" and not require_https:
         return True, "http peer URL"
     if scheme == "http":
         return False, "second-degree peers must use https"

@@ -142,6 +142,27 @@ def test_review_explains_each_peer_and_does_not_import_repos() -> None:
     assert sum(item["reason"] == "the peer cap was reached" for item in kept_decisions) == 2
 
 
+def test_non_boolean_heuristic_flags_do_not_open_http() -> None:
+    allowed, reason = explain_peer_url(
+        "http://127.0.0.1:9/fossah/publish",
+        {**HEURISTIC, "allow_insecure_loopback": "false"},
+    )
+    assert allowed is False
+    assert reason == "peer heuristic is unreadable"
+    opened, opened_reason = explain_peer_url(
+        "http://plain.example/fossah/publish",
+        {**HEURISTIC, "require_https": ""},
+    )
+    assert opened is False
+    assert opened_reason == "peer heuristic is unreadable"
+    listed, listed_reason = explain_peer_url(
+        "https://ok.example/p",
+        {**HEURISTIC, "blocked_hosts": "no"},
+    )
+    assert listed is False
+    assert listed_reason == "peer heuristic is unreadable"
+
+
 def test_peer_url_with_a_newline_is_refused() -> None:
     allowed, reason = explain_peer_url("https://peer.example/fossah/publish\nsekret", HEURISTIC)
     assert allowed is False
