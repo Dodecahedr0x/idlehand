@@ -118,14 +118,14 @@ idlehand rad patch update rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b2
 idlehand rad patch send rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2
 ```
 
-A contributor node lists the repository and does not have to delegate it. `rad issue open` creates the issue. `rad patch open` runs `git push rad HEAD:refs/patches` on the trusted side, and only for that listed RID or a delegated one.
+A contributor node lists the repository and does not have to delegate it. `rad issue open` creates the issue locally. `rad patch open` runs `git push rad HEAD:refs/patches` on the trusted side, and only for that listed RID or a delegated one. IdleHand records the issue, the patch, or a review only after `rad sync` reports that another node received the repository.
 
 ```bash
 idlehand rad issue create rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --title "Broken link" --body "The README link 404s."
 idlehand rad patch open rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --path /path/to/checkout --title "Fix the link" --body "Updates the README."
 ```
 
-The host delegates the RID, checks the patch out, and runs the sandbox test. A passing check accepts the patch. A failing check refuses it. If `rad` is missing, the node is stopped, or the sandbox does not run, IdleHand does not accept the patch and does not refuse it.
+The host delegates the RID, checks the patch out, and runs the sandbox test. A passing check accepts the patch. A failing check refuses it. IdleHand records that verdict only after `rad sync` replicates it. If `rad` is missing, the node is stopped, the sync reaches no other node, or the sandbox does not run, IdleHand does not accept the patch and does not refuse it.
 
 ```bash
 idlehand rad patch check rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2 --path /path/to/checkout

@@ -9,8 +9,10 @@ delegation file, the publish feed, or analytics.
 A node whose source list names a RID may open an issue and a patch on it.
 Opening that patch runs `git push rad HEAD:refs/patches` on the trusted side.
 A host who delegates the RID reviews the patch, runs the sandbox check, and
-accepts or refuses it. A missing `rad`, a stopped node, or a sandbox that did
-not run is not an acceptance and is not a refusal.
+accepts or refuses it. None of those is recorded until `rad sync` reports that
+another node received the repository. A missing `rad`, a stopped node, a
+failed sync, or a sandbox that did not run is not an acceptance and is not a
+refusal.
 """
 
 from __future__ import annotations
@@ -331,11 +333,24 @@ def create_issue(home: Path, raw: str, title: str, body: str) -> ForgeResult:
     if blocked is not None:
         return blocked
     result = _run(
-        ["issue", "open", "--repo", rid, "--title", title.strip(), "--description", body],
+        [
+            "issue",
+            "open",
+            "--repo",
+            rid,
+            "--title",
+            title.strip(),
+            "--description",
+            body,
+            "--no-announce",
+        ],
     )
     issue_id = _cob_from(result)
     if result.returncode != 0 or not issue_id:
         return ForgeResult(False, _failure("rad did not confirm that the issue was opened", result))
+    blocked = _replicate(rid)
+    if blocked is not None:
+        return blocked
     return ForgeResult(True, f"opened issue {issue_id} on {rid}")
 
 
@@ -359,9 +374,13 @@ def update_issue(home: Path, raw: str, raw_id: str, title: str, body: str) -> Fo
         command.extend(["--title", title.strip()])
     if body.strip():
         command.extend(["--description", body])
+    command.append("--no-announce")
     result = _run(command)
     if result.returncode != 0 or issue_id not in _plain((result.stdout or "") + (result.stderr or "")):
         return ForgeResult(False, _failure("rad did not confirm that the issue was updated", result))
+    blocked = _replicate(rid)
+    if blocked is not None:
+        return blocked
     return ForgeResult(True, f"updated issue {issue_id} on {rid}")
 
 
@@ -383,9 +402,13 @@ def update_patch(home: Path, raw: str, raw_id: str, title: str, body: str) -> Fo
     command = ["patch", "edit", patch_id, "--repo", rid, "--message", title.strip()]
     if body.strip():
         command.extend(["--message", body])
+    command.append("--no-announce")
     result = _run(command)
     if result.returncode != 0:
         return ForgeResult(False, _failure("rad did not confirm that the patch was updated", result))
+    blocked = _replicate(rid)
+    if blocked is not None:
+        return blocked
     return ForgeResult(True, f"updated patch {patch_id} on {rid}")
 
 
@@ -450,6 +473,33 @@ def _git_push(checkout: Path, title: str, body: str) -> subprocess.CompletedProc
 
 
 _OPENED = re.compile(r"Patch ([0-9a-f]{40}) opened")
+_SYNCED_SEEDS = re.compile(r"(?:Synced with|already in sync with) ([0-9]+) seed")
+
+
+def _other_node_received(text: str) -> bool:
+    """True when `rad sync` says another node has these refs.
+
+    The signal is the sync report. A file in this node's Radicle home is not
+    replication.
+    """
+    if any(int(count) >= 1 for count in _SYNCED_SEEDS.findall(text)):
+        return True
+    return any("Synced with" in line and _NID.search(line) for line in text.splitlines())
+
+
+def _replicate(rid: str) -> ForgeResult | None:
+    """Announce the repository. Fail unless another node receives it."""
+    result = _run(
+        ["sync", rid, "--announce", "--replicas", "1", "--timeout", "20s"],
+        timeout=40,
+    )
+    plain = _plain((result.stdout or "") + "\n" + (result.stderr or ""))
+    if result.returncode == 0 and _other_node_received(plain):
+        return None
+    detail = _show(plain)
+    if detail:
+        return ForgeResult(False, f"rad did not replicate that repository: {detail}")
+    return ForgeResult(False, "rad did not replicate that repository")
 
 
 def open_patch(home: Path, raw: str, title: str, body: str, checkout: str) -> ForgeResult:
@@ -475,6 +525,9 @@ def open_patch(home: Path, raw: str, title: str, body: str, checkout: str) -> Fo
     match = _OPENED.search(plain)
     if result.returncode != 0 or match is None:
         return ForgeResult(False, _failure("rad did not confirm that the patch was opened", result))
+    blocked = _replicate(rid)
+    if blocked is not None:
+        return blocked
     return ForgeResult(True, f"opened patch {match.group(1)} on {rid}")
 
 
@@ -528,12 +581,25 @@ def review_patch(home: Path, raw: str, raw_id: str, checkout: str) -> ForgeResul
     verdict = "accept" if outcome.ok else "reject"
     message = "sandbox check passed" if outcome.ok else "sandbox check failed"
     reviewed = _run(
-        ["patch", "review", patch_id, "--repo", rid, f"--{verdict}", "--message", message],
+        [
+            "patch",
+            "review",
+            patch_id,
+            "--repo",
+            rid,
+            f"--{verdict}",
+            "--message",
+            message,
+            "--no-announce",
+        ],
         cwd=path,
         timeout=60,
     )
     if reviewed.returncode != 0:
         return ForgeResult(False, _failure("rad did not confirm the review", reviewed))
+    blocked = _replicate(rid)
+    if blocked is not None:
+        return blocked
     if verdict == "accept":
         return ForgeResult(True, f"accepted patch {patch_id} on {rid}")
     return ForgeResult(True, f"refused patch {patch_id} on {rid}")

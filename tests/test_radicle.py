@@ -76,6 +76,15 @@ fi
 if [ "$1" = "patch" ] && [ "$2" = "review" ]; then
   exit 0
 fi
+if [ "$1" = "sync" ]; then
+  if [ "$mode" = "unsynced" ]; then
+    printf '%s\n' "All seeds timed out"
+    exit 1
+  fi
+  printf '%s\n' "Synced with 1 seed(s)"
+  printf '%s\n' "Synced with $IDLEHAND_RAD_NID in 0s"
+  exit 0
+fi
 exit 1
 """
 
@@ -186,7 +195,12 @@ def test_delegate_is_explicit_and_issues_and_patches_use_rad(tmp_path: Path, mon
         == 0
     )
     recorded = log.read_text(encoding="utf-8")
-    assert f"issue open --repo {RID} --title Broken link --description The README link 404s." in recorded
+    assert (
+        f"issue open --repo {RID} --title Broken link --description The README link 404s. --no-announce"
+        in recorded
+    )
+    assert f"sync {RID} --announce --replicas 1 --timeout 20s" in recorded
+    assert "rad-passphrase-sekret" not in recorded
     assert "opened issue " + ISSUE in capsys.readouterr().out
     assert (
         main(["--home", str(home), "rad", "issue", "update", RID, ISSUE, "--body", "Still broken."])
@@ -220,7 +234,11 @@ def test_delegate_is_explicit_and_issues_and_patches_use_rad(tmp_path: Path, mon
         == 0
     )
     recorded = log.read_text(encoding="utf-8")
-    assert f"patch edit {PATCH} --repo {RID} --message Fix the link --message Updates the README." in recorded
+    assert (
+        f"patch edit {PATCH} --repo {RID} --message Fix the link --message Updates the README. --no-announce"
+        in recorded
+    )
+    assert f"sync {RID} --announce --replicas 1 --timeout 20s" in recorded
     assert "git push" not in recorded
     assert "--push" not in recorded
     _draft(home, "pr-draft.md", "# Patch draft\n\nPatch body.\n")
@@ -435,10 +453,54 @@ def test_patch_check_needs_a_sandbox_and_a_delegation(tmp_path: Path, monkeypatc
     assert f"accepted patch {PATCH}" in capsys.readouterr().out
     recorded = log.read_text(encoding="utf-8")
     assert "--accept" in recorded
+    assert "--no-announce" in recorded
+    assert f"sync {RID} --announce --replicas 1 --timeout 20s" in recorded
     assert "rad-passphrase-sekret" not in recorded
     checkout_lines = [line for line in recorded.splitlines() if line.startswith("patch checkout")]
     assert checkout_lines
     assert all("--repo" not in line and "--force" in line for line in checkout_lines)
+
+
+def test_a_send_without_replication_is_not_recorded(tmp_path: Path, monkeypatch, capsys) -> None:
+    from idlehand.sandbox import SandboxResult
+
+    log = _rad(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    checkout = _git_dir(tmp_path)
+    assert main(["--home", str(home), "rad", "delegate", RID]) == 0
+    monkeypatch.setenv("IDLEHAND_RAD_FAKE", "unsynced")
+
+    assert main(["--home", str(home), "rad", "issue", "create", RID, "--title", "Broken link", "--body", "The README link 404s."]) == 1
+    captured = capsys.readouterr()
+    assert "did not replicate" in captured.err
+    assert "opened issue" not in captured.out
+    assert "accepted" not in captured.out
+    recorded = log.read_text(encoding="utf-8")
+    assert "issue open" in recorded
+    assert f"sync {RID} --announce --replicas 1" in recorded
+    assert "rad-passphrase-sekret" not in recorded
+
+    def push(path: Path, title: str, body: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(["git"], 0, "", f"Patch {PATCH} opened\n")
+
+    monkeypatch.setattr("idlehand.radicle._git_push", push)
+    log.write_text("", encoding="utf-8")
+    assert main(["--home", str(home), "rad", "patch", "open", RID, "--path", str(checkout), "--title", "Fix the link", "--body", "Updates the README."]) == 1
+    captured = capsys.readouterr()
+    assert "did not replicate" in captured.err
+    assert "opened patch" not in captured.out
+
+    def passed(*_args: object, **_kwargs: object) -> SandboxResult:
+        return SandboxResult("namespace", True, True, 0, "idlehand-action=test\n", "", "sandbox command finished", ["python"])
+
+    monkeypatch.setattr("idlehand.radicle.run_sandbox", passed)
+    log.write_text("", encoding="utf-8")
+    assert main(["--home", str(home), "rad", "patch", "check", RID, PATCH, "--path", str(checkout)]) == 1
+    captured = capsys.readouterr()
+    assert "did not replicate" in captured.err
+    assert "accepted" not in captured.out
+    assert "refused patch" not in captured.out
+    assert "--accept" in log.read_text(encoding="utf-8")
 
 
 def test_git_push_keeps_the_passphrase_out_of_argv(monkeypatch) -> None:
