@@ -160,6 +160,29 @@ def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -
     assert alive_pid(home) is None
 
 
+def test_non_finite_loop_interval_does_not_spin(tmp_path: Path, monkeypatch) -> None:
+    from fossah.node import _loop_interval
+
+    assert _loop_interval({"loop_interval_seconds": float("nan")}) == 5.0
+    assert _loop_interval({"loop_interval_seconds": float("inf")}) == 5.0
+    home = tmp_path / "home"
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    _configure(home)
+    config = load_config(home)
+    config["loop_interval_seconds"] = float("nan")
+    save_config(home, config)
+    pid = start_node(home)
+    try:
+        first = (read_json(state_path(home)) or {})["node"]["heartbeat_at"]
+        time.sleep(0.4)
+        second = (read_json(state_path(home)) or {})["node"]["heartbeat_at"]
+        assert second == first
+        assert alive_pid(home) == pid
+    finally:
+        stop_node(home)
+
+
 def test_pid_file_symlink_is_replaced(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")

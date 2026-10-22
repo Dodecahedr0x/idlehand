@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import signal
 import threading
@@ -26,7 +27,7 @@ def _sleep(seconds: float, stopped: list[bool]) -> None:
 def _loop_interval(config: dict) -> float:
     """Seconds to wait between ticks. A bad setting stays at five seconds."""
     value = config.get("loop_interval_seconds", 5)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         return 5.0
     return float(value)
 
