@@ -6,7 +6,11 @@ here is delegated automatically. `rad` runs on the trusted side, outside the
 sandbox. Its keys stay in the Radicle home: they are not written into the
 delegation file, the publish feed, or analytics.
 
-Opening a new patch is `git push rad HEAD:refs/patches`. IdleHand does not push.
+A node whose source list names a RID may open an issue and a patch on it.
+Opening that patch runs `git push rad HEAD:refs/patches` on the trusted side.
+A host who delegates the RID reviews the patch, runs the sandbox check, and
+accepts or refuses it. A missing `rad`, a stopped node, or a sandbox that did
+not run is not an acceptance and is not a refusal.
 """
 
 from __future__ import annotations
@@ -20,8 +24,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from idlehand.config import load_config, save_config
-from idlehand.fetch import scrub_secrets
+from idlehand.actions import action_command
+from idlehand.config import load_config, load_sources, save_config
+from idlehand.fetch import resolve_git, scrub_secrets
+from idlehand.sandbox import detect_runtime, run as run_sandbox
 from idlehand.forge import (
     ForgeResult,
     _checked_text,
@@ -60,6 +66,7 @@ def _plain(text: str) -> str:
 
 def _show(text: str) -> str:
     cleaned = scrub_secrets(_plain(text))
+    secret = os.environ.get("RAD_PASSPHRASE", "")
     kept: list[str] = []
     for line in cleaned.splitlines():
         stripped = line.strip()
@@ -67,23 +74,30 @@ def _show(text: str) -> str:
             continue
         if "PRIVATE KEY" in stripped or "RAD_PASSPHRASE" in stripped:
             continue
+        if secret and secret in stripped:
+            continue
         kept.append(stripped)
     if not kept:
         return ""
     return kept[0][:200]
 
 
-def _run(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+def _run(
+    args: list[str],
+    timeout: int = 30,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     binary = shutil.which("rad")
     if binary is None:
         return subprocess.CompletedProcess(args, 127, "", _NOT_INSTALLED)
-    cwd = Path(tempfile.mkdtemp(prefix="idlehand-rad-"))
+    owned = cwd is None
+    work = Path(tempfile.mkdtemp(prefix="idlehand-rad-")) if owned else cwd
     command = [binary, *args]
     try:
         try:
             return subprocess.run(
                 command,
-                cwd=cwd,
+                cwd=work,
                 env=os.environ.copy(),
                 capture_output=True,
                 text=True,
@@ -95,7 +109,8 @@ def _run(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]
         except OSError:
             return subprocess.CompletedProcess(command, 127, "", _NOT_INSTALLED)
     finally:
-        shutil.rmtree(cwd, ignore_errors=True)
+        if owned:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def _failure(fallback: str, result: subprocess.CompletedProcess[str]) -> str:
@@ -262,6 +277,42 @@ def _delegated_ready(home: Path, rid: str) -> ForgeResult | None:
     return None
 
 
+def _listed(home: Path, rid: str) -> bool:
+    try:
+        sources = load_sources(home)
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return any(parse_rid(str(source.get("url", ""))) == rid for source in sources)
+
+
+def _work_ready(home: Path, rid: str) -> ForgeResult | None:
+    """A listed repository or a delegated one, with the Radicle node running.
+
+    Delegation still requires that this identity controls the RID. A source
+    list entry is how a contributor works on a repository they do not control.
+    An unreadable delegation file stops the command.
+    """
+    rows = load_delegated(home)
+    if rows is None:
+        return ForgeResult(False, "the delegation list is unreadable")
+    delegated = any(provider == "radicle" and name == rid for provider, name in rows)
+    if not delegated and not _listed(home, rid):
+        return ForgeResult(False, "that repository is not delegated")
+    if shutil.which("rad") is None:
+        return ForgeResult(False, _NOT_INSTALLED)
+    running = node_running()
+    if not running.ok:
+        return running
+    found = identity()
+    if isinstance(found, ForgeResult):
+        return found
+    if delegated:
+        controlled = _controls(rid, found[1])
+        if not controlled.ok:
+            return controlled
+    return None
+
+
 def _cob_from(result: subprocess.CompletedProcess[str]) -> str:
     found = _COB.findall(_plain((result.stdout or "") + "\n" + (result.stderr or "")))
     if not found:
@@ -276,7 +327,7 @@ def create_issue(home: Path, raw: str, title: str, body: str) -> ForgeResult:
     rid = parse_rid(raw)
     if rid is None:
         return ForgeResult(False, "repository must look like rad:z…")
-    blocked = _delegated_ready(home, rid)
+    blocked = _work_ready(home, rid)
     if blocked is not None:
         return blocked
     result = _run(
@@ -336,6 +387,154 @@ def update_patch(home: Path, raw: str, raw_id: str, title: str, body: str) -> Fo
     if result.returncode != 0:
         return ForgeResult(False, _failure("rad did not confirm that the patch was updated", result))
     return ForgeResult(True, f"updated patch {patch_id} on {rid}")
+
+
+def _checkout(raw: str) -> Path | ForgeResult:
+    if not raw or "\n" in raw or "\x00" in raw or "\r" in raw:
+        return ForgeResult(False, "the checkout is unreadable")
+    path = Path(raw)
+    if path.is_symlink():
+        return ForgeResult(False, "the checkout is unreadable")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError:
+        return ForgeResult(False, "the checkout is unreadable")
+    if not resolved.is_dir():
+        return ForgeResult(False, "the checkout is unreadable")
+    git_dir = resolved / ".git"
+    if git_dir.is_symlink() or not git_dir.exists():
+        return ForgeResult(False, "that checkout is not a git repository")
+    return resolved
+
+
+def _checkout_rid(path: Path) -> str | ForgeResult:
+    result = _run(["."], cwd=path, timeout=15)
+    if result.returncode != 0:
+        return ForgeResult(False, "that checkout is not a Radicle repository")
+    for line in _plain(result.stdout or "").splitlines():
+        rid = parse_rid(line.strip())
+        if rid:
+            return rid
+    return ForgeResult(False, "that checkout is not a Radicle repository")
+
+
+def _git_push(checkout: Path, title: str, body: str) -> subprocess.CompletedProcess[str]:
+    """Push a patch ref. The Radicle key stays in the environment, not in argv."""
+    git = resolve_git()
+    if git is None:
+        return subprocess.CompletedProcess(["git"], 127, "", "git is not installed")
+    command = [git, "push", "rad", "-o", f"patch.message={title}"]
+    if body.strip():
+        command.extend(["-o", f"patch.message={body}"])
+    command.append("HEAD:refs/patches")
+    env = os.environ.copy()
+    rad_bin = shutil.which("rad")
+    if rad_bin:
+        bin_dir = str(Path(rad_bin).resolve().parent)
+        env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        return subprocess.run(
+            command,
+            cwd=checkout,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, 124, "", "git push timed out")
+    except OSError:
+        return subprocess.CompletedProcess(command, 127, "", "git is not installed")
+
+
+_OPENED = re.compile(r"Patch ([0-9a-f]{40}) opened")
+
+
+def open_patch(home: Path, raw: str, title: str, body: str, checkout: str) -> ForgeResult:
+    refused = _checked_text(title, body, require_title=True, require_body=False)
+    if refused is not None:
+        return refused
+    rid = parse_rid(raw)
+    if rid is None:
+        return ForgeResult(False, "repository must look like rad:z…")
+    blocked = _work_ready(home, rid)
+    if blocked is not None:
+        return blocked
+    path = _checkout(checkout)
+    if isinstance(path, ForgeResult):
+        return path
+    reported = _checkout_rid(path)
+    if isinstance(reported, ForgeResult):
+        return reported
+    if reported != rid:
+        return ForgeResult(False, "that checkout is not this repository")
+    result = _git_push(path, title.strip(), body)
+    plain = _plain((result.stdout or "") + "\n" + (result.stderr or ""))
+    match = _OPENED.search(plain)
+    if result.returncode != 0 or match is None:
+        return ForgeResult(False, _failure("rad did not confirm that the patch was opened", result))
+    return ForgeResult(True, f"opened patch {match.group(1)} on {rid}")
+
+
+def review_patch(home: Path, raw: str, raw_id: str, checkout: str) -> ForgeResult:
+    """Run the sandbox check on a contributor patch, then accept or refuse it.
+
+    The Radicle key is not passed into the sandbox. A sandbox that does not
+    run does not accept the patch and does not refuse it.
+    """
+    patch_id = parse_cob_id(raw_id)
+    if patch_id is None:
+        return ForgeResult(False, "the patch id is unreadable")
+    rid = parse_rid(raw)
+    if rid is None:
+        return ForgeResult(False, "repository must look like rad:z…")
+    blocked = _delegated_ready(home, rid)
+    if blocked is not None:
+        return blocked
+    path = _checkout(checkout)
+    if isinstance(path, ForgeResult):
+        return path
+    reported = _checkout_rid(path)
+    if isinstance(reported, ForgeResult):
+        return reported
+    if reported != rid:
+        return ForgeResult(False, "that checkout is not this repository")
+    checked_out = _run(["patch", "checkout", patch_id, "--repo", rid, "--force"], cwd=path, timeout=60)
+    if checked_out.returncode != 0:
+        return ForgeResult(False, _failure("rad did not check out the patch", checked_out))
+    try:
+        config = load_config(home)
+    except (OSError, UnicodeError, ValueError):
+        return ForgeResult(False, "config is unreadable")
+    sandbox_cfg = config.get("sandbox") if isinstance(config.get("sandbox"), dict) else {}
+    runtime = detect_runtime(str(sandbox_cfg.get("runtime", "auto")))
+    if runtime is None:
+        return ForgeResult(False, "the sandbox did not run the check")
+    outcome = run_sandbox(
+        path,
+        action_command("test", runtime),
+        runtime=runtime,
+        image=str(sandbox_cfg.get("image", "python:3.12-slim")),
+        memory=str(sandbox_cfg.get("memory", "512m")),
+        cpus=str(sandbox_cfg.get("cpus", "1")),
+        timeout=180,
+    )
+    if not outcome.invoked:
+        return ForgeResult(False, "the sandbox did not run the check")
+    verdict = "accept" if outcome.ok else "reject"
+    message = "sandbox check passed" if outcome.ok else "sandbox check failed"
+    reviewed = _run(
+        ["patch", "review", patch_id, "--repo", rid, f"--{verdict}", "--message", message],
+        cwd=path,
+        timeout=60,
+    )
+    if reviewed.returncode != 0:
+        return ForgeResult(False, _failure("rad did not confirm the review", reviewed))
+    if verdict == "accept":
+        return ForgeResult(True, f"accepted patch {patch_id} on {rid}")
+    return ForgeResult(True, f"refused patch {patch_id} on {rid}")
 
 
 def _draft(home: Path, rid: str, filename: str) -> tuple[str, str] | None:

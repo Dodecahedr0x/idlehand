@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 from idlehand.analytics import render_text
@@ -65,6 +66,16 @@ fi
 if [ "$1" = "patch" ] && [ "$2" = "edit" ]; then
   exit 0
 fi
+if [ "$1" = "." ]; then
+  printf '%s\\n' "$IDLEHAND_RAD_RID"
+  exit 0
+fi
+if [ "$1" = "patch" ] && [ "$2" = "checkout" ]; then
+  exit 0
+fi
+if [ "$1" = "patch" ] && [ "$2" = "review" ]; then
+  exit 0
+fi
 exit 1
 """
 
@@ -80,6 +91,7 @@ def _rad(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
     monkeypatch.setenv("IDLEHAND_RAD_LOG", str(log))
     monkeypatch.setenv("IDLEHAND_RAD_NID", NID)
+    monkeypatch.setenv("IDLEHAND_RAD_RID", RID)
     monkeypatch.setenv("IDLEHAND_RAD_FAKE", "ok")
     monkeypatch.setenv("RAD_PASSPHRASE", "rad-passphrase-sekret")
     return log
@@ -323,6 +335,132 @@ def test_revoke_is_local_and_a_symlink_is_not_followed(tmp_path: Path, monkeypat
     assert main(["--home", str(home), "rad", "delegate", RID]) == 1
     assert "unreadable" in capsys.readouterr().err
     assert outside.read_text(encoding="utf-8") == "untouched\n"
+
+
+def _git_dir(tmp_path: Path) -> Path:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / ".git").mkdir()
+    return checkout
+
+
+def test_a_listed_repo_can_open_an_issue_and_a_patch(tmp_path: Path, monkeypatch, capsys) -> None:
+    from idlehand.config import ensure_home, save_sources
+
+    _rad(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    ensure_home(home)
+    save_sources(home, [{"url": RID, "note": "IdleHand"}])
+    checkout = _git_dir(tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    def push(path: Path, title: str, body: str) -> subprocess.CompletedProcess[str]:
+        calls.append((title, body))
+        return subprocess.CompletedProcess(["git"], 0, "", f"Patch {PATCH} opened\n")
+
+    monkeypatch.setattr("idlehand.radicle._git_push", push)
+    assert main(["--home", str(home), "rad", "issue", "create", RID, "--title", "Broken link", "--body", "The README link 404s."]) == 0
+    assert not (home / "delegated.toml").exists()
+    assert main(["--home", str(home), "rad", "patch", "open", RID, "--path", str(checkout), "--title", "Fix the link", "--body", "Updates the README."]) == 0
+    captured = capsys.readouterr()
+    assert f"opened patch {PATCH}" in captured.out
+    assert calls == [("Fix the link", "Updates the README.")]
+    assert "rad-passphrase-sekret" not in captured.out
+    calls.clear()
+    other = "rad:z42hL2jL4XNk6K8oHQaSWfMgCL7ji"
+    assert main(["--home", str(home), "rad", "patch", "open", other, "--path", str(checkout), "--title", "No", "--body", "No."]) == 1
+    assert "not delegated" in capsys.readouterr().err
+    assert calls == []
+    assert main(
+        [
+            "--home",
+            str(home),
+            "rad",
+            "patch",
+            "open",
+            RID,
+            "--path",
+            str(checkout),
+            "--title",
+            "T",
+            "--body",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n",
+        ]
+    ) == 1
+    assert calls == []
+
+
+def test_patch_check_needs_a_sandbox_and_a_delegation(tmp_path: Path, monkeypatch, capsys) -> None:
+    from idlehand.sandbox import SandboxResult
+
+    log = _rad(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    checkout = _git_dir(tmp_path)
+    assert main(["--home", str(home), "rad", "patch", "check", RID, PATCH, "--path", str(checkout)]) == 1
+    assert "not delegated" in capsys.readouterr().err
+    assert not log.exists() or "patch review" not in log.read_text(encoding="utf-8")
+    assert main(["--home", str(home), "rad", "delegate", RID]) == 0
+
+    def refused(*_args: object, **_kwargs: object) -> SandboxResult:
+        return SandboxResult("namespace", False, False, None, "", "", "refused to run on the host", [])
+
+    monkeypatch.setattr("idlehand.radicle.run_sandbox", refused)
+    log.write_text("", encoding="utf-8")
+    assert main(["--home", str(home), "rad", "patch", "check", RID, PATCH, "--path", str(checkout)]) == 1
+    captured = capsys.readouterr()
+    assert "did not run" in captured.err
+    assert "accepted" not in captured.out
+    assert "refused patch" not in captured.out
+    assert "patch review" not in log.read_text(encoding="utf-8")
+
+    def failed(*_args: object, **_kwargs: object) -> SandboxResult:
+        return SandboxResult("namespace", True, False, 1, "", "nope", "sandbox exited 1", ["python"])
+
+    monkeypatch.setattr("idlehand.radicle.run_sandbox", failed)
+    log.write_text("", encoding="utf-8")
+    assert main(["--home", str(home), "rad", "patch", "check", RID, PATCH, "--path", str(checkout)]) == 0
+    captured = capsys.readouterr()
+    assert f"refused patch {PATCH}" in captured.out
+    assert "accepted" not in captured.out
+    recorded = log.read_text(encoding="utf-8")
+    assert "--reject" in recorded
+    assert "--accept" not in recorded
+
+    def passed(*_args: object, **_kwargs: object) -> SandboxResult:
+        return SandboxResult("namespace", True, True, 0, "idlehand-action=test\n", "", "sandbox command finished", ["python"])
+
+    monkeypatch.setattr("idlehand.radicle.run_sandbox", passed)
+    log.write_text("", encoding="utf-8")
+    assert main(["--home", str(home), "rad", "patch", "check", RID, PATCH, "--path", str(checkout)]) == 0
+    assert f"accepted patch {PATCH}" in capsys.readouterr().out
+    recorded = log.read_text(encoding="utf-8")
+    assert "--accept" in recorded
+    assert "rad-passphrase-sekret" not in recorded
+    assert "patch checkout" in recorded
+
+
+def test_git_push_keeps_the_passphrase_out_of_argv(monkeypatch) -> None:
+    from idlehand.radicle import _git_push
+
+    monkeypatch.setenv("RAD_PASSPHRASE", "idlehand-dev")
+    seen: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["command"] = command
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("idlehand.radicle.subprocess.run", fake_run)
+    monkeypatch.setattr("idlehand.radicle.resolve_git", lambda: "/usr/bin/git")
+    _git_push(Path("/tmp"), "Title", "Body")
+    command = seen["command"]
+    assert isinstance(command, list)
+    assert "HEAD:refs/patches" in command
+    assert "idlehand-dev" not in command
+    assert "patch.message=Title" in command
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert env.get("RAD_PASSPHRASE") == "idlehand-dev"
 
 
 def test_github_and_radicle_rows_share_the_delegation_file(tmp_path: Path) -> None:

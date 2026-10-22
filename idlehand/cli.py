@@ -38,7 +38,9 @@ from idlehand.radicle import (
     create_issue as create_rad_issue,
     delegate_rid,
     node_running,
+    open_patch,
     remember_identity,
+    review_patch,
     revoke_rid,
     send_issue_draft as send_rad_issue,
     send_patch_draft,
@@ -365,7 +367,7 @@ def cmd_rad(args: argparse.Namespace) -> int:
         return _finish(delegate_rid(home, args.repo))
     if action == "revoke":
         return _finish(revoke_rid(home, args.repo))
-    if action in {"issue-create", "issue-update", "patch-update"}:
+    if action in {"issue-create", "issue-update", "patch-update", "patch-open"}:
         ok, body = _body_text(args)
         if not ok:
             return 1
@@ -374,7 +376,11 @@ def cmd_rad(args: argparse.Namespace) -> int:
             return _finish(create_rad_issue(home, args.repo, title, body))
         if action == "issue-update":
             return _finish(update_rad_issue(home, args.repo, args.cob_id, title, body))
+        if action == "patch-open":
+            return _finish(open_patch(home, args.repo, title, body, args.checkout))
         return _finish(update_patch(home, args.repo, args.cob_id, title, body))
+    if action == "patch-check":
+        return _finish(review_patch(home, args.repo, args.cob_id, args.checkout))
     if action == "issue-send":
         return _finish(send_rad_issue(home, args.repo))
     if action == "patch-send":
@@ -489,8 +495,18 @@ def _add_rad_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     issue_send.add_argument("repo")
     issue_send.set_defaults(func=cmd_rad, rad_action="issue-send")
 
-    patch = commands.add_parser("patch", help="edit or send patch text on a delegated repository")
+    patch = commands.add_parser("patch", help="open, review, or edit a patch")
     patch_commands = patch.add_subparsers(dest="patch_action", required=True)
+    patch_open = patch_commands.add_parser("open", help="open a patch with git push rad on the trusted side")
+    patch_open.add_argument("repo")
+    patch_open.add_argument("--path", dest="checkout", required=True)
+    _add_text_flags(patch_open, title_required=True)
+    patch_open.set_defaults(func=cmd_rad, rad_action="patch-open")
+    patch_check = patch_commands.add_parser("check", help="sandbox a contributor patch, then accept or refuse it")
+    patch_check.add_argument("repo")
+    patch_check.add_argument("cob_id")
+    patch_check.add_argument("--path", dest="checkout", required=True)
+    patch_check.set_defaults(func=cmd_rad, rad_action="patch-check")
     patch_update = patch_commands.add_parser("update", help="edit the title and description of an existing patch")
     patch_update.add_argument("repo")
     patch_update.add_argument("cob_id")

@@ -118,9 +118,20 @@ idlehand rad patch update rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b2
 idlehand rad patch send rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2
 ```
 
-`rad issue open` and `rad issue edit` create and update issues. `rad patch edit` changes the title and description of a patch that already exists. `issue send` and `patch send` use the local draft stored for that RID. If `rad` is missing, the node is not running, this identity does not control the repository, or `rad` does not confirm the result, the command says so and does not record a delegation or a sent issue or patch.
+A contributor node lists the repository and does not have to delegate it. `rad issue open` creates the issue. `rad patch open` runs `git push rad HEAD:refs/patches` on the trusted side, and only for that listed RID or a delegated one.
 
-Opening a new patch is `git push rad HEAD:refs/patches`. IdleHand does not run that push.
+```bash
+idlehand rad issue create rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --title "Broken link" --body "The README link 404s."
+idlehand rad patch open rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --path /path/to/checkout --title "Fix the link" --body "Updates the README."
+```
+
+The host delegates the RID, checks the patch out, and runs the sandbox test. A passing check accepts the patch. A failing check refuses it. If `rad` is missing, the node is stopped, or the sandbox does not run, IdleHand does not accept the patch and does not refuse it.
+
+```bash
+idlehand rad patch check rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2 --path /path/to/checkout
+```
+
+`rad patch edit` changes the title and description of a patch that already exists. If `rad` does not confirm a result, the command says so and stops.
 
 `rad` keys stay in the Radicle home. They are not copied into the sandbox, the publish feed, or analytics.
 
@@ -176,7 +187,6 @@ Not done in this slice:
 
 - Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
 - The contribution loop copies issue and pull request drafts into the IdleHand home and does not send them. `contributions pushed` stays at 0. Sending a draft is explicit: `idlehand rad issue send` or `patch send` for a delegated RID, or `idlehand github issue send` or `pr send` for a delegated GitHub repository.
-- Opening a new Radicle patch. That is a `git push` to `refs/patches`, and IdleHand does not push.
 - Forges other than the Radicle path and the optional GitHub interop.
 - Demo output is not a contribution.
 

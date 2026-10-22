@@ -8,6 +8,7 @@ from __future__ import annotations
 
 TEST_SCRIPT = """
 import pathlib, sys, unittest
+sys.path.insert(0, "/work")
 root = pathlib.Path("/work")
 syntax_errors = 0
 for path in root.rglob("*.py"):
