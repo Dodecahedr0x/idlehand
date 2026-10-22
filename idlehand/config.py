@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from fossah.home import atomic_write, dump_toml, home_lock, read_toml
+from idlehand.home import atomic_write, dump_toml, home_lock, read_toml
 
 DEFAULT_SPENDING_LIMIT_TOKENS = 10_000
 ESTIMATE_TOKENS_PER_CYCLE = 2_500
@@ -15,25 +15,25 @@ DEFAULT_LISTEN_PORT = 47321
 
 DEFAULT_REPOS = [
     {
-        "url": "https://example.com/fossah/sample-alpha",
-        "note": "Example. Replace this with a repository you want Fossah to work on.",
+        "url": "https://example.com/idlehand/sample-alpha",
+        "note": "Example. Replace this with a repository you want IdleHand to work on.",
     },
     {
-        "url": "https://example.com/fossah/sample-beta",
-        "note": "Example. Replace this with a repository you want Fossah to work on.",
+        "url": "https://example.com/idlehand/sample-beta",
+        "note": "Example. Replace this with a repository you want IdleHand to work on.",
     },
 ]
 
-CONFIG_HEADER = """# Fossah node configuration. This file is yours.
+CONFIG_HEADER = """# IdleHand node configuration. This file is yours.
 # The spending limit counts usage the Claude CLI reports. Otherwise it is a local estimate, not a bill from a provider.
 """
 
 SOURCES_HEADER = """# Local discovery list. This file is yours.
-# Fossah reads it from disk. It is not fetched from a catalog.
-# Add repos by editing this file or by opening a fossah: link.
+# IdleHand reads it from disk. It is not fetched from a catalog.
+# Add repos by editing this file or by opening an idlehand: link.
 """
 
-PEERS_HEADER = """# Peers this node already has. Fossah fetches each URL directly.
+PEERS_HEADER = """# Peers this node already has. IdleHand fetches each URL directly.
 # Peers of these peers can be added by the heuristic in config.toml.
 # This list is not a catalog, and it does not add repositories.
 """

@@ -2,9 +2,9 @@ import json
 import subprocess
 from pathlib import Path
 
-from fossah.analytics import render_text
-from fossah.config import ensure_home, load_sources, save_config, save_peers, save_sources
-from fossah.loop import _workspace, tick
+from idlehand.analytics import render_text
+from idlehand.config import ensure_home, load_sources, save_config, save_peers, save_sources
+from idlehand.loop import _workspace, tick
 from tests.support import BROKEN_FILES, KEY_FILES, SAMPLE_FILES, make_repo
 
 
@@ -87,12 +87,12 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     recorded = invoked.read_text(encoding="utf-8").splitlines()
     assert recorded[0::2] == ["hit", "hit", "hit", "hit"]
     assert {Path(line).resolve() for line in recorded[1::2]} == {planner_dir}
-    assert "fossah-action=test" in state["plans"][0]["sandbox"]["stdout"]
+    assert "idlehand-action=test" in state["plans"][0]["sandbox"]["stdout"]
     assert "tests_run=1" in state["plans"][0]["sandbox"]["stdout"]
     assert state["plans"][0]["sandbox"]["ok"] is True
-    assert "fossah-action=issue" in state["plans"][2]["sandbox"]["stdout"]
-    assert "fossah-action=pull_request" in pull["sandbox"]["stdout"]
-    draft = _workspace(home, url) / ".fossah" / "pr-draft.md"
+    assert "idlehand-action=issue" in state["plans"][2]["sandbox"]["stdout"]
+    assert "idlehand-action=pull_request" in pull["sandbox"]["stdout"]
+    draft = _workspace(home, url) / ".idlehand" / "pr-draft.md"
     assert "not pushed" in draft.read_text(encoding="utf-8")
     kept = list((home / "drafts").rglob("issue-draft.md"))
     assert kept
@@ -112,14 +112,14 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
 
 
 def test_kept_drafts_do_not_follow_a_symlink(tmp_path: Path) -> None:
-    from fossah.loop import _keep_drafts
+    from idlehand.loop import _keep_drafts
 
     home = tmp_path / "home"
     workspace = tmp_path / "work"
-    (workspace / ".fossah").mkdir(parents=True)
+    (workspace / ".idlehand").mkdir(parents=True)
     secret = tmp_path / "secret"
     secret.write_text("host-secret", encoding="utf-8")
-    (workspace / ".fossah" / "issue-draft.md").symlink_to(secret)
+    (workspace / ".idlehand" / "issue-draft.md").symlink_to(secret)
     _keep_drafts(home, workspace, "https://github.com/org/repo")
     assert secret.read_text(encoding="utf-8") == "host-secret"
     assert not (home / "drafts").exists() or not list((home / "drafts").rglob("issue-draft.md"))
@@ -175,8 +175,8 @@ def test_non_positive_estimate_does_not_start_a_cycle(tmp_path: Path, monkeypatc
 
 
 def test_bad_peer_clock_does_not_skip_the_spending_stop(tmp_path: Path, monkeypatch) -> None:
-    from fossah.config import state_path
-    from fossah.home import write_json
+    from idlehand.config import state_path
+    from idlehand.home import write_json
 
     home = tmp_path / "home"
     invoked = _connect(home, tmp_path, monkeypatch)
@@ -268,9 +268,9 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     _ready(home)
     before = [repo["url"] for repo in load_sources(home)]
     document = {
-        "fossah": 1,
+        "idlehand": 1,
         "node_id": "peer-b",
-        "peers": [{"url": "https://second.example/fossah/publish", "id": "second"}],
+        "peers": [{"url": "https://second.example/idlehand/publish", "id": "second"}],
         "repos": [{"url": "https://github.com/someone/not-imported"}],
     }
     peer_file = tmp_path / "peer.json"
@@ -278,7 +278,7 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     save_peers(home, [{"url": peer_file.as_uri(), "id": "", "source": "user", "endorsements": 1}])
     state = tick(home)
     peers_file = (home / "peers.toml").read_text(encoding="utf-8")
-    assert "https://second.example/fossah/publish" in peers_file
+    assert "https://second.example/idlehand/publish" in peers_file
     assert "peers-of-peers" in peers_file
     assert [repo["url"] for repo in load_sources(home)] == before
     assert "https://github.com/someone/not-imported" not in (home / "sources.toml").read_text(encoding="utf-8")
@@ -289,7 +289,7 @@ def test_peer_fetch_adds_peers_not_repos(tmp_path: Path) -> None:
     assert "trust" not in published
     assert published["repos"]
     text = render_text(home)
-    assert "accepted peer https://second.example/fossah/publish — https peer URL" in text
+    assert "accepted peer https://second.example/idlehand/publish — https peer URL" in text
     assert "https://github.com/someone/not-imported" not in (home / "trust.json").read_text(encoding="utf-8")
 
 
@@ -307,7 +307,7 @@ def test_non_utf8_peer_document_does_not_crash_or_leak(tmp_path: Path) -> None:
 
 
 def test_unreadable_peer_heuristic_does_not_skip_the_cycle(tmp_path: Path, monkeypatch) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
@@ -323,7 +323,7 @@ def test_unreadable_peer_heuristic_does_not_skip_the_cycle(tmp_path: Path, monke
     save_config(home, config)
     _local_source(home, tmp_path)
     peer = tmp_path / "peer.json"
-    peer.write_text('{"peers":["https://second.example/fossah/publish"],"repos":[]}\n', encoding="utf-8")
+    peer.write_text('{"peers":["https://second.example/idlehand/publish"],"repos":[]}\n', encoding="utf-8")
     save_peers(home, [{"url": peer.as_uri(), "id": "", "source": "user", "endorsements": 1}])
     state = tick(home)
     assert state["plans"][0]["contributed"] is True
@@ -331,7 +331,7 @@ def test_unreadable_peer_heuristic_does_not_skip_the_cycle(tmp_path: Path, monke
         item["reason"] == "peer heuristic is unreadable" and item["accepted"] is False for item in load_trust(home)
     )
     assert "peer heuristic is unreadable" in render_text(home)
-    assert "https://second.example/fossah/publish" not in (home / "peers.toml").read_text(encoding="utf-8")
+    assert "https://second.example/idlehand/publish" not in (home / "peers.toml").read_text(encoding="utf-8")
 
 
 def test_credential_peer_url_is_not_fetched_or_published(tmp_path: Path) -> None:
@@ -339,7 +339,7 @@ def test_credential_peer_url_is_not_fetched_or_published(tmp_path: Path) -> None
     _ready(home)
     save_peers(
         home,
-        [{"url": "https://user:sekret@peer.example/fossah/publish", "id": "", "source": "user", "endorsements": 1}],
+        [{"url": "https://user:sekret@peer.example/idlehand/publish", "id": "", "source": "user", "endorsements": 1}],
     )
     save_sources(home, [{"url": "https://github.com/org/repo.git?token=othersecret", "note": "typed"}])
     state = tick(home)
@@ -370,7 +370,7 @@ def test_demo_clone_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     assert plan["contributed"] is False
     assert plan["upstream_cloned"] is True
     assert plan["sandbox"]["ok"] is True
-    assert "fossah-action=test" in plan["sandbox"]["stdout"]
+    assert "idlehand-action=test" in plan["sandbox"]["stdout"]
     assert "tests_run=1" in plan["sandbox"]["stdout"]
     assert "sk-openai" not in json.dumps(plan["sandbox"])
     assert state["contributions_pushed"] == 0
@@ -483,13 +483,13 @@ def test_audit_and_issue_drafts_stay_local(tmp_path: Path, monkeypatch) -> None:
     assert audit["action"] == "audit"
     assert audit["contributed"] is True
     assert "private key" in audit["sandbox"]["stdout"]
-    report = (_workspace(home, url) / ".fossah" / "audit.txt").read_text(encoding="utf-8")
+    report = (_workspace(home, url) / ".idlehand" / "audit.txt").read_text(encoding="utf-8")
     assert "private key" in report
     second = tick(home)
     issue = second["plans"][1]
     assert issue["action"] == "issue"
     assert issue["contributed"] is True
-    draft = (_workspace(home, url) / ".fossah" / "issue-draft.md").read_text(encoding="utf-8")
+    draft = (_workspace(home, url) / ".idlehand" / "issue-draft.md").read_text(encoding="utf-8")
     assert "not filed" in draft
     assert "private key" in draft
     kept_audit = list((home / "drafts").rglob("audit.txt"))
@@ -498,7 +498,7 @@ def test_audit_and_issue_drafts_stay_local(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_sandbox_setup_failure_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
-    from fossah.sandbox import SandboxResult
+    from idlehand.sandbox import SandboxResult
 
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
@@ -522,7 +522,7 @@ def test_sandbox_setup_failure_is_not_a_contribution(tmp_path: Path, monkeypatch
             argv=["/usr/bin/python3", "-c", "print(1)"],
         )
 
-    monkeypatch.setattr("fossah.loop.run", exploded)
+    monkeypatch.setattr("idlehand.loop.run", exploded)
     state = tick(home)
     plan = state["plans"][0]
     assert plan["upstream_cloned"] is True
@@ -545,7 +545,7 @@ def test_fetch_exception_is_not_a_contribution(tmp_path: Path, monkeypatch) -> N
     def boom(url, workspace, **kwargs):
         raise RuntimeError("fetch blew up")
 
-    monkeypatch.setattr("fossah.loop.clone_repository", boom)
+    monkeypatch.setattr("idlehand.loop.clone_repository", boom)
     state = tick(home)
     plan = state["plans"][0]
     assert plan["contributed"] is False
@@ -577,7 +577,7 @@ def _reporter(tmp_path: Path, monkeypatch, stdout: str) -> Path:
 def test_reported_usage_is_metered_without_adding_the_estimate(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     stdout = (
-        '{"type":"result","result":"touch /tmp/fossah-do-not-run sk-planner-secret",'
+        '{"type":"result","result":"touch /tmp/idlehand-do-not-run sk-planner-secret",'
         '"usage":{"input_tokens":30,"output_tokens":12}}'
     )
     invoked = _reporter(tmp_path, monkeypatch, stdout)
@@ -602,9 +602,9 @@ def test_reported_usage_is_metered_without_adding_the_estimate(tmp_path: Path, m
     assert first["ledger"]["metering"] == "reported"
     assert first["plans"][0]["subscription_executed"] is True
     assert Path(invoked.read_text(encoding="utf-8").strip()).resolve() == (home / "planner").resolve()
-    assert "touch /tmp/fossah-do-not-run" not in json.dumps(first["plans"])
+    assert "touch /tmp/idlehand-do-not-run" not in json.dumps(first["plans"])
     assert "sk-planner-secret" not in (home / "state.json").read_text(encoding="utf-8")
-    assert not Path("/tmp/fossah-do-not-run").exists()
+    assert not Path("/tmp/idlehand-do-not-run").exists()
     text = render_text(home)
     assert "reported by the subscription" in text
     assert "local estimate, not billed usage" not in text
@@ -749,7 +749,7 @@ def test_planner_timeout_keeps_the_estimate(tmp_path: Path, monkeypatch) -> None
     )
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{script.parent}:/usr/bin:/bin")
-    monkeypatch.setattr("fossah.usage.PLAN_TIMEOUT", 0.2)
+    monkeypatch.setattr("idlehand.usage.PLAN_TIMEOUT", 0.2)
     config = _ready(home)
     config["subscription"] = "claude"
     config["sandbox"]["execute"] = True
@@ -780,7 +780,7 @@ def test_planner_timeout_keeps_the_estimate(tmp_path: Path, monkeypatch) -> None
 
 
 def test_sandbox_timeout_still_records_the_command_that_started(tmp_path: Path, monkeypatch) -> None:
-    import fossah.loop as loop_module
+    import idlehand.loop as loop_module
 
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
@@ -824,7 +824,7 @@ def test_sandbox_timeout_still_records_the_command_that_started(tmp_path: Path, 
 
 
 def test_reported_tokens_stay_on_the_ledger_when_the_sandbox_fails(tmp_path: Path, monkeypatch) -> None:
-    from fossah.sandbox import SandboxResult
+    from idlehand.sandbox import SandboxResult
 
     home = tmp_path / "home"
     _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":9,"output_tokens":0}}')
@@ -851,7 +851,7 @@ def test_reported_tokens_stay_on_the_ledger_when_the_sandbox_fails(tmp_path: Pat
             argv=["/usr/bin/python3"],
         )
 
-    monkeypatch.setattr("fossah.loop.run", refused)
+    monkeypatch.setattr("idlehand.loop.run", refused)
     state = tick(home)
     plan = state["plans"][0]
     assert plan["contributed"] is False
@@ -864,7 +864,7 @@ def test_reported_tokens_stay_on_the_ledger_when_the_sandbox_fails(tmp_path: Pat
 
 
 def test_zero_report_and_refused_sandbox_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
-    from fossah.sandbox import SandboxResult
+    from idlehand.sandbox import SandboxResult
 
     home = tmp_path / "home"
     _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":0,"output_tokens":0}}')
@@ -892,7 +892,7 @@ def test_zero_report_and_refused_sandbox_is_not_a_contribution(tmp_path: Path, m
             argv=["/usr/bin/python3"],
         )
 
-    monkeypatch.setattr("fossah.loop.run", refused)
+    monkeypatch.setattr("idlehand.loop.run", refused)
     first = tick(home)
     second = tick(home)
     assert [plan["contributed"] for plan in second["plans"]] == [False, False]
@@ -993,7 +993,7 @@ def test_workspace_symlink_is_not_cloned_or_charged(tmp_path: Path, monkeypatch)
 
 
 def test_link_cycle_reports_trust_and_usage_together(tmp_path: Path, monkeypatch) -> None:
-    from fossah.links import apply_link
+    from idlehand.links import apply_link
 
     home = tmp_path / "home"
     _reporter(tmp_path, monkeypatch, '{"type":"result","usage":{"input_tokens":5,"output_tokens":2}}')
@@ -1009,7 +1009,7 @@ def test_link_cycle_reports_trust_and_usage_together(tmp_path: Path, monkeypatch
     url = make_repo(tmp_path / "linked", SAMPLE_FILES)
     added = apply_link(
         home,
-        "fossah://add?repo=https://github.com/pallets/click&repo=git@github.com:org/nope.git",
+        "idlehand://add?repo=https://github.com/pallets/click&repo=git@github.com:org/nope.git",
     )
     assert added == ["https://github.com/pallets/click"]
     save_sources(home, [{"url": url, "note": "local cycle"}])
@@ -1062,7 +1062,7 @@ def test_repo_test_output_does_not_keep_a_credential_or_a_private_key(tmp_path: 
     assert "sekret" not in log
     assert "BEGIN OPENSSH PRIVATE KEY" not in blob
     assert "private key material omitted" in plan["sandbox"]["stdout"]
-    assert "fossah-action=test" in plan["sandbox"]["stdout"]
+    assert "idlehand-action=test" in plan["sandbox"]["stdout"]
 
 
 def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monkeypatch) -> None:
@@ -1091,10 +1091,10 @@ def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monk
             "HOME": str(tmp_path),
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_AUTHOR_NAME": "fossah",
-            "GIT_AUTHOR_EMAIL": "fossah@example.com",
-            "GIT_COMMITTER_NAME": "fossah",
-            "GIT_COMMITTER_EMAIL": "fossah@example.com",
+            "GIT_AUTHOR_NAME": "idlehand",
+            "GIT_AUTHOR_EMAIL": "idlehand@example.com",
+            "GIT_COMMITTER_NAME": "idlehand",
+            "GIT_COMMITTER_EMAIL": "idlehand@example.com",
         },
     )
     subprocess.run(
@@ -1107,10 +1107,10 @@ def test_sandbox_does_not_follow_a_symlink_to_a_host_secret(tmp_path: Path, monk
             "HOME": str(tmp_path),
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_AUTHOR_NAME": "fossah",
-            "GIT_AUTHOR_EMAIL": "fossah@example.com",
-            "GIT_COMMITTER_NAME": "fossah",
-            "GIT_COMMITTER_EMAIL": "fossah@example.com",
+            "GIT_AUTHOR_NAME": "idlehand",
+            "GIT_AUTHOR_EMAIL": "idlehand@example.com",
+            "GIT_COMMITTER_NAME": "idlehand",
+            "GIT_COMMITTER_EMAIL": "idlehand@example.com",
         },
     )
     state = tick(home)
@@ -1130,7 +1130,7 @@ def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
     config["sandbox"]["runtime"] = "namespace"
     save_config(home, config)
     _local_source(home, tmp_path)
-    monkeypatch.setattr("fossah.fetch.resolve_git", lambda: None)
+    monkeypatch.setattr("idlehand.fetch.resolve_git", lambda: None)
     state = tick(home)
     plan = state["plans"][0]
     assert plan["contributed"] is False
@@ -1141,9 +1141,9 @@ def test_missing_git_is_not_a_contribution(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_corrupt_plan_entry_does_not_skip_the_spending_stop(tmp_path: Path, monkeypatch) -> None:
-    from fossah.config import state_path
-    from fossah.home import write_json
-    from fossah.trust import decision, remember
+    from idlehand.config import state_path
+    from idlehand.home import write_json
+    from idlehand.trust import decision, remember
 
     home = tmp_path / "home"
     invoked = _connect(home, tmp_path, monkeypatch)
@@ -1169,9 +1169,9 @@ def test_corrupt_plan_entry_does_not_skip_the_spending_stop(tmp_path: Path, monk
 
 
 def test_unreadable_ledger_stops_before_a_cycle_and_analytics_keeps_trust(tmp_path: Path, monkeypatch) -> None:
-    from fossah.analytics import render_text
-    from fossah.config import state_path
-    from fossah.trust import decision, remember
+    from idlehand.analytics import render_text
+    from idlehand.config import state_path
+    from idlehand.trust import decision, remember
 
     home = tmp_path / "home"
     invoked = _connect(home, tmp_path, monkeypatch)
@@ -1219,12 +1219,12 @@ def test_unreadable_ledger_stops_before_a_cycle_and_analytics_keeps_trust(tmp_pa
 
 
 def test_kept_drafts_drop_credential_urls_and_private_key_lines(tmp_path: Path) -> None:
-    from fossah.loop import _keep_drafts
+    from idlehand.loop import _keep_drafts
 
     home = tmp_path / "home"
     workspace = tmp_path / "work"
-    (workspace / ".fossah").mkdir(parents=True)
-    (workspace / ".fossah" / "audit.txt").write_text(
+    (workspace / ".idlehand").mkdir(parents=True)
+    (workspace / ".idlehand" / "audit.txt").write_text(
         "https://user:sekret@github.com/org/repo.git\n-----BEGIN OPENSSH PRIVATE KEY-----\nfiles=1\n",
         encoding="utf-8",
     )
@@ -1239,7 +1239,7 @@ def test_kept_drafts_drop_credential_urls_and_private_key_lines(tmp_path: Path) 
 
 
 def test_kept_drafts_do_not_write_through_a_directory_symlink(tmp_path: Path) -> None:
-    from fossah.loop import _keep_drafts
+    from idlehand.loop import _keep_drafts
 
     home = tmp_path / "home"
     home.mkdir()
@@ -1249,8 +1249,8 @@ def test_kept_drafts_do_not_write_through_a_directory_symlink(tmp_path: Path) ->
     marker.write_text("keep", encoding="utf-8")
     (home / "drafts").symlink_to(outside)
     workspace = tmp_path / "work"
-    (workspace / ".fossah").mkdir(parents=True)
-    (workspace / ".fossah" / "audit.txt").write_text("finding\n", encoding="utf-8")
+    (workspace / ".idlehand").mkdir(parents=True)
+    (workspace / ".idlehand" / "audit.txt").write_text("finding\n", encoding="utf-8")
     _keep_drafts(home, workspace, "https://github.com/org/repo")
     assert marker.read_text(encoding="utf-8") == "keep"
     assert list(outside.rglob("audit.txt")) == []
@@ -1258,13 +1258,13 @@ def test_kept_drafts_do_not_write_through_a_directory_symlink(tmp_path: Path) ->
 
 
 def test_kept_draft_file_symlink_and_oversized_draft_are_left_alone(tmp_path: Path) -> None:
-    from fossah.loop import _keep_drafts
+    from idlehand.loop import _keep_drafts
 
     home = tmp_path / "home"
     workspace = tmp_path / "work"
-    (workspace / ".fossah").mkdir(parents=True)
-    (workspace / ".fossah" / "audit.txt").write_text("finding\n", encoding="utf-8")
-    (workspace / ".fossah" / "issue-draft.md").write_bytes(b"x" * 1_000_001)
+    (workspace / ".idlehand").mkdir(parents=True)
+    (workspace / ".idlehand" / "audit.txt").write_text("finding\n", encoding="utf-8")
+    (workspace / ".idlehand" / "issue-draft.md").write_bytes(b"x" * 1_000_001)
     repo = "https://github.com/org/repo"
     _keep_drafts(home, workspace, repo)
     kept = list((home / "drafts").rglob("audit.txt"))
@@ -1275,13 +1275,13 @@ def test_kept_draft_file_symlink_and_oversized_draft_are_left_alone(tmp_path: Pa
     secret.write_text("do-not-touch", encoding="utf-8")
     kept[0].unlink()
     kept[0].symlink_to(secret)
-    (workspace / ".fossah" / "audit.txt").write_text("replacement\n", encoding="utf-8")
+    (workspace / ".idlehand" / "audit.txt").write_text("replacement\n", encoding="utf-8")
     _keep_drafts(home, workspace, repo)
     assert secret.read_text(encoding="utf-8") == "do-not-touch"
     assert kept[0].is_symlink()
 
 
-def test_audit_still_runs_when_fossah_dir_is_a_file(tmp_path: Path, monkeypatch) -> None:
+def test_audit_still_runs_when_idlehand_dir_is_a_file(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
     config = _ready(home)
@@ -1298,7 +1298,7 @@ def test_audit_still_runs_when_fossah_dir_is_a_file(tmp_path: Path, monkeypatch)
         {
             "readme.txt": "hello\n",
             "secret.pem": "-----BEGIN OPENSSH PRIVATE KEY-----\nHOSTKEYMATERIAL\n-----END OPENSSH PRIVATE KEY-----\n",
-            ".fossah": "not a directory\n",
+            ".idlehand": "not a directory\n",
         },
     )
     state = tick(home)
@@ -1308,7 +1308,7 @@ def test_audit_still_runs_when_fossah_dir_is_a_file(tmp_path: Path, monkeypatch)
     assert plan["sandbox"]["ok"] is True
     assert "private key material" in plan["sandbox"]["stdout"]
     assert "HOSTKEYMATERIAL" not in plan["sandbox"]["stdout"]
-    assert "fossah-action=audit" in plan["sandbox"]["stdout"]
+    assert "idlehand-action=audit" in plan["sandbox"]["stdout"]
 
 
 def test_unreadable_peer_fetch_interval_still_contributes(tmp_path: Path, monkeypatch) -> None:
@@ -1327,7 +1327,7 @@ def test_unreadable_peer_fetch_interval_still_contributes(tmp_path: Path, monkey
     _local_source(home, tmp_path)
     save_peers(
         home,
-        [{"url": "https://user:sekret@peer.example/fossah/publish", "id": "", "source": "user", "endorsements": 1}],
+        [{"url": "https://user:sekret@peer.example/idlehand/publish", "id": "", "source": "user", "endorsements": 1}],
     )
     state = tick(home)
     assert state["plans"][0]["contributed"] is True
@@ -1338,7 +1338,7 @@ def test_unreadable_peer_fetch_interval_still_contributes(tmp_path: Path, monkey
 
 
 def test_non_finite_peer_interval_still_contributes(tmp_path: Path, monkeypatch) -> None:
-    from fossah.loop import _fetch_interval
+    from idlehand.loop import _fetch_interval
 
     assert _fetch_interval(float("nan")) is None
     assert _fetch_interval(float("inf")) is None
@@ -1385,9 +1385,9 @@ def test_encoded_credential_in_the_source_list_is_not_recorded(tmp_path: Path, m
 
 
 def test_non_integer_peer_counters_do_not_stop_the_cycle(tmp_path: Path, monkeypatch) -> None:
-    from fossah.config import state_path
-    from fossah.home import write_json
-    from fossah.loop import load_state
+    from idlehand.config import state_path
+    from idlehand.home import write_json
+    from idlehand.loop import load_state
 
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
@@ -1402,9 +1402,9 @@ def test_non_integer_peer_counters_do_not_stop_the_cycle(tmp_path: Path, monkeyp
     save_config(home, config)
     _local_source(home, tmp_path)
     document = {
-        "fossah": 1,
+        "idlehand": 1,
         "node_id": "peer-b",
-        "peers": [{"url": "https://second.example/fossah/publish", "id": "second"}],
+        "peers": [{"url": "https://second.example/idlehand/publish", "id": "second"}],
         "repos": [{"url": "https://github.com/someone/not-imported"}],
     }
     peer_file = tmp_path / "peer.json"
@@ -1436,7 +1436,7 @@ def test_unreadable_trust_file_does_not_skip_the_cycle(tmp_path: Path, monkeypat
     _local_source(home, tmp_path)
     peer = tmp_path / "peer.json"
     peer.write_text(
-        '{"peers":[{"url":"https://second.example/fossah/publish","id":"second"}],"repos":[]}\n',
+        '{"peers":[{"url":"https://second.example/idlehand/publish","id":"second"}],"repos":[]}\n',
         encoding="utf-8",
     )
     save_peers(home, [{"url": peer.as_uri(), "id": "", "source": "user", "endorsements": 1}])
@@ -1448,14 +1448,14 @@ def test_unreadable_trust_file_does_not_skip_the_cycle(tmp_path: Path, monkeypat
     assert state["plans"][0]["contributed"] is True
     text = render_text(home)
     assert "trust record is unreadable" not in text
-    assert "accepted peer https://second.example/fossah/publish" in text
+    assert "accepted peer https://second.example/idlehand/publish" in text
     assert "spending:" in text
     loaded = json.loads((home / "trust.json").read_text(encoding="utf-8"))
     assert isinstance(loaded, list) and loaded
 
 
 def test_trust_symlink_and_object_are_not_shown(tmp_path: Path) -> None:
-    from fossah.trust import decision, remember
+    from idlehand.trust import decision, remember
 
     home = tmp_path / "home"
     ensure_home(home)
@@ -1485,7 +1485,7 @@ def test_trust_symlink_and_object_are_not_shown(tmp_path: Path) -> None:
 
 
 def test_atomic_write_does_not_follow_a_temp_symlink(tmp_path: Path) -> None:
-    from fossah.home import atomic_write
+    from idlehand.home import atomic_write
 
     home = tmp_path / "home"
     home.mkdir()
@@ -1509,9 +1509,9 @@ def test_atomic_write_does_not_follow_a_temp_symlink(tmp_path: Path) -> None:
 
 
 def test_unreadable_config_stops_before_a_clone(tmp_path: Path, monkeypatch) -> None:
-    from fossah.config import state_path
-    from fossah.home import write_json
-    from fossah.loop import load_state
+    from idlehand.config import state_path
+    from idlehand.home import write_json
+    from idlehand.loop import load_state
 
     home = tmp_path / "home"
     _connect(home, tmp_path, monkeypatch)
@@ -1578,9 +1578,9 @@ def test_unreadable_peer_list_still_contributes(tmp_path: Path, monkeypatch) -> 
 
 
 def test_analytics_shows_spending_and_trust_when_lists_are_unreadable(tmp_path: Path) -> None:
-    from fossah.analytics import render_json
-    from fossah.config import state_path
-    from fossah.home import write_json
+    from idlehand.analytics import render_json
+    from idlehand.config import state_path
+    from idlehand.home import write_json
 
     home = tmp_path / "home"
     ensure_home(home)

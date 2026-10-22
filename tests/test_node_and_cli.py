@@ -3,11 +3,11 @@ import os
 import time
 from pathlib import Path
 
-from fossah.analytics import render_text
-from fossah.config import ensure_home, load_config, save_config, save_sources, state_path
-from fossah.handler import register_protocol_handler
-from fossah.home import read_json
-from fossah.process import alive_pid, start_node, stop_node
+from idlehand.analytics import render_text
+from idlehand.config import ensure_home, load_config, save_config, save_sources, state_path
+from idlehand.handler import register_protocol_handler
+from idlehand.home import read_json
+from idlehand.process import alive_pid, start_node, stop_node
 from tests.support import SAMPLE_FILES, make_repo
 
 
@@ -42,7 +42,7 @@ def test_node_stays_up_after_the_limit(tmp_path: Path, monkeypatch) -> None:
     script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\npwd >> '{invoked}'\n", encoding="utf-8")
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-node-secret")
     _configure(home)
     config = load_config(home)
@@ -92,7 +92,7 @@ def test_node_stays_up_when_the_clone_is_refused(tmp_path: Path, monkeypatch) ->
     script.write_text(f"#!/bin/sh\necho hit >> '{invoked}'\n", encoding="utf-8")
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     _configure(home)
     config = load_config(home)
     config["subscription"] = "claude"
@@ -121,7 +121,7 @@ def test_node_stays_up_when_the_clone_is_refused(tmp_path: Path, monkeypatch) ->
 def test_bad_loop_interval_does_not_exit_the_node(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     _configure(home)
     config = load_config(home)
     config["loop_interval_seconds"] = "fast"
@@ -139,7 +139,7 @@ def test_bad_loop_interval_does_not_exit_the_node(tmp_path: Path, monkeypatch) -
 def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     _configure(home)
     pid = start_node(home)
     try:
@@ -161,13 +161,13 @@ def test_unreadable_config_does_not_exit_the_node(tmp_path: Path, monkeypatch) -
 
 
 def test_non_finite_loop_interval_does_not_spin(tmp_path: Path, monkeypatch) -> None:
-    from fossah.node import _loop_interval
+    from idlehand.node import _loop_interval
 
     assert _loop_interval({"loop_interval_seconds": float("nan")}) == 5.0
     assert _loop_interval({"loop_interval_seconds": float("inf")}) == 5.0
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     _configure(home)
     config = load_config(home)
     config["loop_interval_seconds"] = float("nan")
@@ -186,7 +186,7 @@ def test_non_finite_loop_interval_does_not_spin(tmp_path: Path, monkeypatch) -> 
 def test_pid_file_symlink_is_replaced(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     _configure(home)
     outside = tmp_path / "outside.pid"
     outside.write_text("sekret\n", encoding="utf-8")
@@ -206,7 +206,7 @@ def test_pid_file_symlink_is_replaced(tmp_path: Path, monkeypatch) -> None:
 def test_uninstalled_subscription_stays_up(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     _configure(home)
     config = load_config(home)
     config["subscription"] = "cursor"
@@ -227,40 +227,40 @@ def test_cli_link_limit_and_handler(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     data = tmp_path / "share"
     config_dir = tmp_path / "config"
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(data))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_dir))
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    from fossah.cli import main
+    from idlehand.cli import main
 
     assert main(["--home", str(home), "init"]) == 0
     assert main(["--home", str(home), "limit", "1500"]) == 0
     assert load_config(home)["spending_limit_tokens"] == 1500
-    assert main(["--home", str(home), "link", "fossah://add?repo=https://github.com/pallets/click"]) == 0
+    assert main(["--home", str(home), "link", "idlehand://add?repo=https://github.com/pallets/click"]) == 0
     assert "https://github.com/pallets/click" in (home / "sources.toml").read_text(encoding="utf-8")
-    desktop = (data / "applications" / "fossah.desktop").read_text(encoding="utf-8")
-    assert "x-scheme-handler/fossah" in desktop
+    desktop = (data / "applications" / "idlehand.desktop").read_text(encoding="utf-8")
+    assert "x-scheme-handler/idlehand" in desktop
     assert "%u" in desktop
     mime = (config_dir / "mimeapps.list").read_text(encoding="utf-8")
-    assert "x-scheme-handler/fossah=fossah.desktop" in mime
+    assert "x-scheme-handler/idlehand=idlehand.desktop" in mime
     status = register_protocol_handler()
     assert status == "registered"
 
 
 def test_cli_link_keeps_good_repos_and_fails_when_all_are_refused(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    from fossah.cli import main
-    from fossah.trust import load_trust
+    from idlehand.cli import main
+    from idlehand.trust import load_trust
 
     mixed = main(
         [
             "--home",
             str(home),
             "link",
-            "fossah://add?repo=https://github.com/pallets/click&repo=https://user:secret@github.com/org/hidden",
+            "idlehand://add?repo=https://github.com/pallets/click&repo=https://user:secret@github.com/org/hidden",
         ]
     )
     assert mixed == 0
@@ -268,19 +268,19 @@ def test_cli_link_keeps_good_repos_and_fails_when_all_are_refused(tmp_path: Path
     assert "secret" not in (home / "trust.json").read_text(encoding="utf-8")
     assert any(item["accepted"] for item in load_trust(home))
     assert any(not item["accepted"] and "credentials" in item["reason"] for item in load_trust(home))
-    refused = main(["--home", str(home), "link", "fossah://add?repo=not-a-repo"])
+    refused = main(["--home", str(home), "link", "idlehand://add?repo=not-a-repo"])
     assert refused == 1
-    bare = main(["fossah://add?repo=git@github.com:org/nope.git"])
+    bare = main(["idlehand://add?repo=git@github.com:org/nope.git"])
     assert bare == 1
     assert "https://github.com/pallets/click" in (home / "sources.toml").read_text(encoding="utf-8")
 
 
-def test_bare_fossah_url(tmp_path: Path, monkeypatch) -> None:
+def test_bare_idlehand_url(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
-    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("IDLEHAND_HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    from fossah.cli import main
+    from idlehand.cli import main
 
-    assert main(["fossah://add?repo=https://github.com/encode/httpx"]) == 0
+    assert main(["idlehand://add?repo=https://github.com/encode/httpx"]) == 0
     assert "https://github.com/encode/httpx" in (home / "sources.toml").read_text(encoding="utf-8")

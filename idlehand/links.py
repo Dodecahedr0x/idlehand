@@ -1,7 +1,7 @@
-"""Fossah links add repositories to the local source list.
+"""IdleHand links add repositories to the local source list.
 
 A link either carries repo URLs or names a list file the publisher hosts.
-The fetch goes to that publisher URL. There is no Fossah directory.
+The fetch goes to that publisher URL. There is no IdleHand directory.
 """
 
 from __future__ import annotations
@@ -13,14 +13,14 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fossah import __version__
-from fossah.config import load_sources, save_sources
-from fossah.fetch import embeds_credentials, public_url
-from fossah.home import home_lock
-from fossah.trust import decision, remember
+from idlehand import __version__
+from idlehand.config import load_sources, save_sources
+from idlehand.fetch import embeds_credentials, public_url
+from idlehand.home import home_lock
+from idlehand.trust import decision, remember
 
 MAX_LIST_BYTES = 1_000_000
-USER_AGENT = f"fossah/{__version__}"
+USER_AGENT = f"idlehand/{__version__}"
 CATALOG_PARAMS = ("catalog", "directory", "registry")
 
 
@@ -34,20 +34,20 @@ class ParsedLink:
     list_url: str = ""
 
 
-def parse_fossah_link(url: str) -> ParsedLink:
+def parse_idlehand_link(url: str) -> ParsedLink:
     raw = url.strip()
-    if not raw.lower().startswith("fossah:"):
-        raise LinkError("not a Fossah link")
+    if not raw.lower().startswith("idlehand:"):
+        raise LinkError("not an IdleHand link")
     parsed = urllib.parse.urlparse(raw)
-    if parsed.scheme.lower() != "fossah":
-        raise LinkError("not a Fossah link")
+    if parsed.scheme.lower() != "idlehand":
+        raise LinkError("not an IdleHand link")
     query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
     for blocked in CATALOG_PARAMS:
         if blocked in query:
-            raise LinkError("Fossah does not resolve links through a catalog")
+            raise LinkError("IdleHand does not resolve links through a catalog")
     action = (parsed.netloc or parsed.path.lstrip("/")).split("/")[0]
     if action not in {"", "add"}:
-        raise LinkError(f"unsupported Fossah link action{_action_label(action)}")
+        raise LinkError(f"unsupported IdleHand link action{_action_label(action)}")
     repos: list[str] = []
     for value in query.get("repo", []):
         repos.extend(_split_repo_field(value))
@@ -55,7 +55,7 @@ def parse_fossah_link(url: str) -> ParsedLink:
         repos.extend(_split_repo_field(value))
     lists = query.get("list", [])
     if len(lists) > 1:
-        raise LinkError("a Fossah link can name only one list file")
+        raise LinkError("an IdleHand link can name only one list file")
     list_url = lists[0].strip() if lists else ""
     if list_url:
         _validate_list_url(list_url)
@@ -69,7 +69,7 @@ def _split_repo_field(value: str) -> list[str]:
 
 
 def judge_repo_url(url: str) -> tuple[bool, str, str]:
-    """Accept or refuse one repository URL from a Fossah link."""
+    """Accept or refuse one repository URL from an IdleHand link."""
     try:
         cleaned = _validate_repo_url(url)
     except LinkError as exc:
@@ -269,7 +269,7 @@ def add_repos(home: Path, urls: list[str]) -> list[str]:
             key = _normalize_repo(validated)
             if key in known:
                 continue
-            current.append({"url": validated, "note": "Added from a Fossah link."})
+            current.append({"url": validated, "note": "Added from an IdleHand link."})
             known.add(key)
             added.append(validated)
         save_sources(home, current)
@@ -286,7 +286,7 @@ class LinkApply(list[str]):
 
 def apply_link(home: Path, url: str) -> LinkApply:
     try:
-        parsed = parse_fossah_link(url)
+        parsed = parse_idlehand_link(url)
     except LinkError as exc:
         choices = [decision("link", url, False, str(exc))]
         remember(home, choices)

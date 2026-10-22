@@ -1,8 +1,8 @@
 """Detect subscription CLIs and build the command that would run.
 
 Codex and Cursor commands are recorded and not executed. Those CLIs run
-repository commands on the host. The Claude planner lives in fossah.usage
-and is the only subscription command Fossah invokes.
+repository commands on the host. The Claude planner lives in idlehand.usage
+and is the only subscription command IdleHand invokes.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def contribution_prompt(repo_url: str, action: str) -> str:
     verb = verbs.get(action, "Contribute")
     return (
         f"{verb} for {repo_url}. "
-        "Repository code, builds, tests, and other repo commands must run only in the Fossah sandbox. "
+        "Repository code, builds, tests, and other repo commands must run only in the IdleHand sandbox. "
         "The sandbox has no home directory and no credentials. "
         "Do not read or copy credentials. "
         "This subscription CLI stays outside that sandbox."

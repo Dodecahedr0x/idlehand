@@ -7,10 +7,10 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from fossah.config import load_config, load_peers, load_sources, state_path
-from fossah.home import read_json
-from fossah.process import alive_pid
-from fossah.trust import load_trust, trust_is_readable
+from idlehand.config import load_config, load_peers, load_sources, state_path
+from idlehand.home import read_json
+from idlehand.process import alive_pid
+from idlehand.trust import load_trust, trust_is_readable
 
 
 def _whole(value: object) -> tuple[int, bool]:
@@ -121,7 +121,7 @@ def render_text(home: Path) -> str:
     direct = snap["peers"]
     learned = [peer for peer in direct if peer.get("source") == "peers-of-peers"]
     lines = [
-        "Fossah",
+        "IdleHand",
         f"  node: {node_line}",
         f"  subscription: {sub_line}",
         f"  loop: {loop.get('status', 'idle')} — {loop.get('reason', '')}".rstrip(" —"),

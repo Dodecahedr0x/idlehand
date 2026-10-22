@@ -174,7 +174,7 @@ def enter_and_exec(workspace: Path, command: list[str]) -> None:
         raise JailError(f"no pivot_root syscall for {machine}")
     uid = os.getuid()
     gid = os.getgid()
-    jail = Path(os.path.abspath(os.path.join(os.sep, "tmp", f"fossah-jail-{os.getpid()}")))
+    jail = Path(os.path.abspath(os.path.join(os.sep, "tmp", f"idlehand-jail-{os.getpid()}")))
     jail.mkdir(mode=0o700, exist_ok=False)
     try:
         flags = os.CLONE_NEWUSER | os.CLONE_NEWNS | os.CLONE_NEWNET | os.CLONE_NEWIPC | os.CLONE_NEWUTS
@@ -226,26 +226,26 @@ def enter_and_exec(workspace: Path, command: list[str]) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--" not in args or "--workspace" not in args:
-        print("usage: python -m fossah.jail --workspace PATH -- COMMAND...", file=sys.stderr)
+        print("usage: python -m idlehand.jail --workspace PATH -- COMMAND...", file=sys.stderr)
         return 2
     split = args.index("--")
     options = args[:split]
     command = args[split + 1 :]
     if not command:
-        print("fossah-sandbox-setup: missing command", file=sys.stderr)
+        print("idlehand-sandbox-setup: missing command", file=sys.stderr)
         return 97
     try:
         workspace_flag = options.index("--workspace")
         workspace = Path(options[workspace_flag + 1])
     except (ValueError, IndexError):
-        print("fossah-sandbox-setup: missing workspace", file=sys.stderr)
+        print("idlehand-sandbox-setup: missing workspace", file=sys.stderr)
         return 97
     try:
         enter_and_exec(workspace, command)
     except JailError as exc:
-        print(f"fossah-sandbox-setup: {exc}", file=sys.stderr)
+        print(f"idlehand-sandbox-setup: {exc}", file=sys.stderr)
         return 97
-    print("fossah-sandbox-setup: exec returned", file=sys.stderr)
+    print("idlehand-sandbox-setup: exec returned", file=sys.stderr)
     return 96
 
 

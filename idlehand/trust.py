@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fossah.fetch import scrub_secrets
-from fossah.home import home_lock, read_json, write_json
+from idlehand.fetch import scrub_secrets
+from idlehand.home import home_lock, read_json, write_json
 
 MAX_DECISIONS = 20
 

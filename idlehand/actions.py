@@ -11,7 +11,7 @@ import pathlib, sys, unittest
 root = pathlib.Path("/work")
 syntax_errors = 0
 for path in root.rglob("*.py"):
-    if path.is_symlink() or any(part in {".git", ".fossah"} for part in path.parts):
+    if path.is_symlink() or any(part in {".git", ".idlehand"} for part in path.parts):
         continue
     try:
         compile(path.read_text(encoding="utf-8", errors="replace"), str(path), "exec")
@@ -24,7 +24,7 @@ print(f"syntax_errors={syntax_errors}")
 suite = unittest.defaultTestLoader.discover("/work", pattern="test*.py", top_level_dir="/work")
 result = unittest.TextTestRunner(verbosity=1).run(suite)
 print(f"tests_run={result.testsRun}")
-print("fossah-action=test")
+print("idlehand-action=test")
 sys.exit(0 if syntax_errors == 0 and result.wasSuccessful() else 1)
 """
 
@@ -34,7 +34,7 @@ root = pathlib.Path("/work")
 findings = []
 files = 0
 for path in root.rglob("*"):
-    if path.is_symlink() or not path.is_file() or any(part in {".git", ".fossah"} for part in path.parts):
+    if path.is_symlink() or not path.is_file() or any(part in {".git", ".idlehand"} for part in path.parts):
         continue
     files += 1
     try:
@@ -52,7 +52,7 @@ for path in root.rglob("*"):
     )
     if any(marker in text for marker in markers):
         findings.append(f"private key material in {path.relative_to(root)}")
-out = root / ".fossah"
+out = root / ".idlehand"
 body = [f"files={files}", f"findings={len(findings)}", *findings]
 if not out.is_symlink():
     try:
@@ -63,7 +63,7 @@ if not out.is_symlink():
     except OSError:
         pass
 print("\\n".join(body))
-print("fossah-action=audit")
+print("idlehand-action=audit")
 sys.exit(0)
 """
 
@@ -72,7 +72,7 @@ import pathlib, sys
 root = pathlib.Path("/work")
 findings = []
 for path in root.rglob("*"):
-    if path.is_symlink() or not path.is_file() or any(part in {".git", ".fossah"} for part in path.parts):
+    if path.is_symlink() or not path.is_file() or any(part in {".git", ".idlehand"} for part in path.parts):
         continue
     try:
         if path.suffix == ".py":
@@ -94,7 +94,7 @@ for path in root.rglob("*"):
     )
     if any(marker in text for marker in markers):
         findings.append(f"private key material in {path.relative_to(root)}")
-out = root / ".fossah"
+out = root / ".idlehand"
 if not out.is_symlink():
     try:
         if out.exists() and not out.is_dir():
@@ -117,7 +117,7 @@ if out is not None:
     except OSError:
         pass
 print(f"issue_findings={len(findings)}")
-print("fossah-action=issue")
+print("idlehand-action=issue")
 sys.exit(0)
 """
 
@@ -126,11 +126,11 @@ import pathlib, sys
 root = pathlib.Path("/work")
 names = []
 for path in root.rglob("*"):
-    if path.is_symlink() or not path.is_file() or any(part in {".git", ".fossah"} for part in path.parts):
+    if path.is_symlink() or not path.is_file() or any(part in {".git", ".idlehand"} for part in path.parts):
         continue
     names.append(str(path.relative_to(root)))
 names.sort()
-out = root / ".fossah"
+out = root / ".idlehand"
 wrote = False
 if not out.is_symlink():
     try:
@@ -143,7 +143,7 @@ if not out.is_symlink():
 lines = [
     "# Local pull request draft",
     "",
-    "Prepared in the Fossah sandbox. This draft was not pushed.",
+    "Prepared in the IdleHand sandbox. This draft was not pushed.",
     "",
     "## Files",
     "",
@@ -155,7 +155,7 @@ if wrote:
     except OSError:
         pass
 print(f"pr_files={len(names)}")
-print("fossah-action=pull_request")
+print("idlehand-action=pull_request")
 sys.exit(0)
 """
 

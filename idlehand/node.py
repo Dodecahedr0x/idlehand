@@ -1,4 +1,4 @@
-"""The Fossah node process. It stays up until it is stopped."""
+"""The IdleHand node process. It stays up until it is stopped."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import threading
 import time
 from pathlib import Path
 
-from fossah.config import ensure_home, load_config, load_peers, load_sources, pid_path, publish_path, state_path
-from fossah.home import home_lock, read_json, write_json
-from fossah.loop import load_state, now_iso, tick
-from fossah.peers import publish_document
-from fossah.publish import start_publish_server
+from idlehand.config import ensure_home, load_config, load_peers, load_sources, pid_path, publish_path, state_path
+from idlehand.home import home_lock, read_json, write_json
+from idlehand.loop import load_state, now_iso, tick
+from idlehand.peers import publish_document
+from idlehand.publish import start_publish_server
 
 
 def _sleep(seconds: float, stopped: list[bool]) -> None:
@@ -75,10 +75,10 @@ def serve(home: Path) -> None:
     if config["publish"].get("listen", True):
         server = start_publish_server(home, host, port)
         if server is not None:
-            thread = threading.Thread(target=server.serve_forever, name="fossah-publish", daemon=True)
+            thread = threading.Thread(target=server.serve_forever, name="idlehand-publish", daemon=True)
             thread.start()
             host, port = server.server_address[0], int(server.server_address[1])
-    listen_url = f"http://{host}:{port}/fossah/publish" if server is not None else ""
+    listen_url = f"http://{host}:{port}/idlehand/publish" if server is not None else ""
     with home_lock(home):
         state = load_state(home, load_config(home))
         state["node"]["pid"] = os.getpid()

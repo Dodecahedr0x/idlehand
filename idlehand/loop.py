@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fossah.actions import action_command
-from fossah.config import (
+from idlehand.actions import action_command
+from idlehand.config import (
     append_log,
     load_config,
     load_peers,
@@ -25,9 +25,9 @@ from fossah.config import (
     save_peers,
     state_path,
 )
-from fossah.fetch import clone_repository, embeds_credentials, public_url, scrub_secrets
-from fossah.home import home_lock, read_json, write_json
-from fossah.peers import (
+from idlehand.fetch import clone_repository, embeds_credentials, public_url, scrub_secrets
+from idlehand.home import home_lock, read_json, write_json
+from idlehand.peers import (
     PeerCandidate,
     count_remote_repos,
     load_peer_document,
@@ -36,10 +36,10 @@ from fossah.peers import (
     publish_document,
     review_second_degree,
 )
-from fossah.sandbox import detect_runtime, run
-from fossah.subscriptions import inspect_subscription, subscription_command
-from fossah.trust import extend_trust
-from fossah.usage import claude_argv, plan_with_claude
+from idlehand.sandbox import detect_runtime, run
+from idlehand.subscriptions import inspect_subscription, subscription_command
+from idlehand.trust import extend_trust
+from idlehand.usage import claude_argv, plan_with_claude
 
 ACTIONS = (
     ("test", "allow_test"),
@@ -196,7 +196,7 @@ def _workspace(home: Path, repo_url: str) -> Path:
 
 
 def _draft_dir(home: Path, repo_url: str) -> Path | None:
-    """Directory under the Fossah home for drafts. Symlinks are not followed."""
+    """Directory under the IdleHand home for drafts. Symlinks are not followed."""
     root = home.resolve()
     drafts = home / "drafts"
     if drafts.is_symlink():
@@ -215,7 +215,7 @@ def _draft_dir(home: Path, repo_url: str) -> Path | None:
 
 def _keep_drafts(home: Path, workspace: Path, repo_url: str) -> None:
     """Copy sandbox drafts out of the clone before the next cycle replaces it."""
-    produced = workspace / ".fossah"
+    produced = workspace / ".idlehand"
     if not produced.is_dir() or produced.is_symlink():
         return
     try:

@@ -1,6 +1,6 @@
 """Serve this node's peer list and repo list for peers it already has.
 
-The listener is this node. It is not a directory for the rest of Fossah.
+The listener is this node. It is not a directory for the rest of IdleHand.
 """
 
 from __future__ import annotations
@@ -9,12 +9,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fossah.config import publish_path
+from idlehand.config import publish_path
 
 
 class PublishHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
-        if urlsplit(self.path).path != "/fossah/publish":
+        if urlsplit(self.path).path != "/idlehand/publish":
             self.send_error(404)
             return
         path = Path(self.server.publish_file)  # type: ignore[attr-defined]

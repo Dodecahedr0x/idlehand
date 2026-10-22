@@ -1,4 +1,4 @@
-"""Command line for the Fossah node."""
+"""Command line for the IdleHand node."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from fossah import __version__
-from fossah.analytics import render_json, render_text
-from fossah.config import (
+from idlehand import __version__
+from idlehand.analytics import render_json, render_text
+from idlehand.config import (
     DEFAULT_SPENDING_LIMIT_TOKENS,
     ensure_home,
     load_config,
@@ -17,14 +17,14 @@ from fossah.config import (
     save_config,
     sources_path,
 )
-from fossah.handler import register_protocol_handler
-from fossah.home import resolve_home
-from fossah.links import LinkError, apply_link
-from fossah.node import serve
-from fossah.peers import user_add_peer
-from fossah.process import alive_pid, start_node, stop_node
-from fossah.sandbox import build_container_argv, detect_runtime, probe_command, run
-from fossah.subscriptions import SUBSCRIPTION_NAMES, inspect_subscription
+from idlehand.handler import register_protocol_handler
+from idlehand.home import resolve_home
+from idlehand.links import LinkError, apply_link
+from idlehand.node import serve
+from idlehand.peers import user_add_peer
+from idlehand.process import alive_pid, start_node, stop_node
+from idlehand.sandbox import build_container_argv, detect_runtime, probe_command, run
+from idlehand.subscriptions import SUBSCRIPTION_NAMES, inspect_subscription
 
 RULE_KEYS = (
     "auto_start",
@@ -50,14 +50,14 @@ def _print_connection(home: Path) -> None:
         )
         return
     print(f"Node is up. {status.detail}. Nothing will be contributed.")
-    print(f"Spending limit: {limit} tokens. Run `fossah demo` for a dry loop.")
+    print(f"Spending limit: {limit} tokens. Run `idlehand demo` for a dry loop.")
 
 
 def cmd_init(args: argparse.Namespace) -> int:
     home = _home(args)
     ensure_home(home)
     handler = register_protocol_handler()
-    print(f"Fossah home: {home}")
+    print(f"IdleHand home: {home}")
     print(f"Source list: {sources_path(home)}")
     print(f"Protocol handler: {handler}")
     print(f"Default spending limit: {DEFAULT_SPENDING_LIMIT_TOKENS} tokens")
@@ -105,16 +105,16 @@ def cmd_start(args: argparse.Namespace) -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(f"Fossah node is up (pid {pid})")
+    print(f"IdleHand node is up (pid {pid})")
     return 0
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
     home = _home(args)
     if stop_node(home):
-        print("Fossah node stopped")
+        print("IdleHand node stopped")
     else:
-        print("Fossah node was not running")
+        print("IdleHand node was not running")
     return 0
 
 
@@ -201,7 +201,7 @@ def cmd_peer(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"Added peer {url}")
-        print("Fossah will fetch that URL directly. This does not add repositories.")
+        print("IdleHand will fetch that URL directly. This does not add repositories.")
         return 0
     peers = load_peers(home)
     if not peers:
@@ -244,7 +244,7 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
         elif shown == "bwrap":
             print("bubblewrap: read-only /usr, workspace mounted at /work, no home mount")
         else:
-            print("no sandbox runtime is available; Fossah will not run repo commands on the host")
+            print("no sandbox runtime is available; IdleHand will not run repo commands on the host")
         return 0
     workspace = home / "workspaces" / "manual"
     chosen = runtime or "namespace"
@@ -268,7 +268,7 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
 def cmd_node(args: argparse.Namespace) -> int:
     home = _home(args)
     if alive_pid(home):
-        print("Fossah node is already running", file=sys.stderr)
+        print("IdleHand node is already running", file=sys.stderr)
         return 1
     serve(home)
     return 0
@@ -285,11 +285,11 @@ def _parse_bool(value: str) -> bool | None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fossah",
-        description="Run a local Fossah node that contributes to open source with your subscription CLIs.",
+        prog="idlehand",
+        description="Run a local IdleHand node that contributes to open source with your subscription CLIs.",
     )
-    parser.add_argument("--home", help="Fossah home. Defaults to $FOSSAH_HOME or ~/.fossah")
-    parser.add_argument("--version", action="version", version=f"fossah {__version__}")
+    parser.add_argument("--home", help="IdleHand home. Defaults to $IDLEHAND_HOME or ~/.idlehand")
+    parser.add_argument("--version", action="version", version=f"idlehand {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init", help="create the local home, source list, and URL handler")
@@ -319,7 +319,7 @@ def build_parser() -> argparse.ArgumentParser:
     limit.add_argument("tokens", nargs="?", type=int)
     limit.set_defaults(func=cmd_limit)
 
-    link = sub.add_parser("link", help="add repos from a fossah: link to the local source list")
+    link = sub.add_parser("link", help="add repos from an idlehand: link to the local source list")
     link.add_argument("url")
     link.set_defaults(func=cmd_link)
 
@@ -357,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args_list = list(sys.argv[1:] if argv is None else argv)
-    if len(args_list) == 1 and args_list[0].startswith("fossah:"):
+    if len(args_list) == 1 and args_list[0].startswith("idlehand:"):
         home = resolve_home(None)
         ensure_home(home)
         try:

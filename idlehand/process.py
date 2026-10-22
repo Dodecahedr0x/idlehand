@@ -9,8 +9,8 @@ import sys
 import time
 from pathlib import Path
 
-from fossah.config import ensure_home, log_path, pid_path, state_path
-from fossah.home import read_json
+from idlehand.config import ensure_home, log_path, pid_path, state_path
+from idlehand.home import read_json
 
 
 def cmdline(pid: int) -> str:
@@ -33,14 +33,14 @@ def alive_pid(home: Path) -> int | None:
         os.kill(pid, 0)
     except OSError:
         return None
-    if "fossah" not in cmdline(pid):
+    if "idlehand" not in cmdline(pid):
         return None
     return pid
 
 
 def _node_env(home: Path) -> dict[str, str]:
     env = os.environ.copy()
-    env["FOSSAH_HOME"] = str(home)
+    env["IDLEHAND_HOME"] = str(home)
     root = str(Path(__file__).resolve().parents[1])
     current = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = root if not current else root + os.pathsep + current
@@ -56,7 +56,7 @@ def start_node(home: Path, timeout: float = 20) -> int:
     log = log_path(home).open("a", encoding="utf-8")
     try:
         subprocess.Popen(
-            [sys.executable, "-m", "fossah", "node"],
+            [sys.executable, "-m", "idlehand", "node"],
             env=_node_env(home),
             cwd=str(home),
             stdout=log,
@@ -77,7 +77,7 @@ def start_node(home: Path, timeout: float = 20) -> int:
     pid = alive_pid(home)
     if pid:
         return pid
-    raise RuntimeError("the Fossah node did not stay up")
+    raise RuntimeError("the IdleHand node did not stay up")
 
 
 def stop_node(home: Path, timeout: float = 5) -> bool:

@@ -1,7 +1,7 @@
 """Meter token usage reported by the subscription CLI.
 
 Only the Claude CLI is invoked, and only as a planner. It runs on the trusted
-side, in an empty directory under the Fossah home, with tools turned off.
+side, in an empty directory under the IdleHand home, with tools turned off.
 Codex and Cursor are not invoked: those CLIs run repository commands on the
 host. The planner's reply is not executed. A missing or unreadable report is
 not a number; the caller keeps the local estimate.
@@ -169,7 +169,7 @@ def plan_with_claude(binary: str, repo_url: str, action: str, home: Path) -> dic
             "executed": False,
             "tokens": None,
             "argv": argv,
-            "reason": "refusing to plan outside the Fossah home",
+            "reason": "refusing to plan outside the IdleHand home",
         }
     try:
         try:

@@ -6,8 +6,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from fossah.config import ensure_home, load_sources
-from fossah.links import LinkError, apply_link, parse_fossah_link
+from idlehand.config import ensure_home, load_sources
+from idlehand.links import LinkError, apply_link, parse_idlehand_link
 
 
 def test_inline_link_adds_repos_locally(tmp_path: Path) -> None:
@@ -15,7 +15,7 @@ def test_inline_link_adds_repos_locally(tmp_path: Path) -> None:
     ensure_home(home)
     added = apply_link(
         home,
-        "fossah://add?repo=https://github.com/pallets/click&repo=https://github.com/encode/httpx",
+        "idlehand://add?repo=https://github.com/pallets/click&repo=https://github.com/encode/httpx",
     )
     assert added == [
         "https://github.com/pallets/click",
@@ -23,21 +23,21 @@ def test_inline_link_adds_repos_locally(tmp_path: Path) -> None:
     ]
     urls = [repo["url"] for repo in load_sources(home)]
     assert "https://github.com/pallets/click" in urls
-    again = apply_link(home, "fossah://add?repos=https://github.com/pallets/click")
+    again = apply_link(home, "idlehand://add?repos=https://github.com/pallets/click")
     assert again == []
 
 
 @pytest.mark.parametrize(
     ("url", "match"),
     [
-        ("fossah://remove?repo=https://github.com/a/b", "unsupported"),
-        ("fossah://add?list=https://a.example/one&list=https://a.example/two", "only one list"),
-        ("fossah://add?repo=https://example.com", "needs a path"),
-        ("https://github.com/a/b", "not a Fossah link"),
+        ("idlehand://remove?repo=https://github.com/a/b", "unsupported"),
+        ("idlehand://add?list=https://a.example/one&list=https://a.example/two", "only one list"),
+        ("idlehand://add?repo=https://example.com", "needs a path"),
+        ("https://github.com/a/b", "not an IdleHand link"),
     ],
 )
 def test_structural_link_refusals_are_recorded(tmp_path: Path, url: str, match: str) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     home = tmp_path / "home"
     ensure_home(home)
@@ -51,7 +51,7 @@ def test_structural_link_refusals_are_recorded(tmp_path: Path, url: str, match: 
 
 def test_catalog_parameter_is_rejected() -> None:
     with pytest.raises(LinkError, match="catalog"):
-        parse_fossah_link("fossah://add?catalog=https://fossah.example/directory&repo=https://github.com/a/b")
+        parse_idlehand_link("idlehand://add?catalog=https://idlehand.example/directory&repo=https://github.com/a/b")
 
 
 def test_publisher_list_is_fetched_directly(tmp_path: Path) -> None:
@@ -76,27 +76,27 @@ def test_publisher_list_is_fetched_directly(tmp_path: Path) -> None:
     try:
         home = tmp_path / "home"
         ensure_home(home)
-        added = apply_link(home, f"fossah://add?list=http://127.0.0.1:{port}/fossah-repos.txt")
+        added = apply_link(home, f"idlehand://add?list=http://127.0.0.1:{port}/idlehand-repos.txt")
     finally:
         server.shutdown()
         server.server_close()
-    assert seen == ["/fossah-repos.txt"]
+    assert seen == ["/idlehand-repos.txt"]
     assert added == [
         "https://github.com/Textualize/rich",
         "https://github.com/pallets/flask",
     ]
-    assert urlparse(f"http://127.0.0.1:{port}/fossah-repos.txt").hostname == "127.0.0.1"
+    assert urlparse(f"http://127.0.0.1:{port}/idlehand-repos.txt").hostname == "127.0.0.1"
 
 
 def test_one_bad_repo_does_not_drop_the_rest_and_analytics_shows_why(tmp_path: Path) -> None:
-    from fossah.analytics import render_text
-    from fossah.trust import load_trust
+    from idlehand.analytics import render_text
+    from idlehand.trust import load_trust
 
     home = tmp_path / "home"
     ensure_home(home)
     added = apply_link(
         home,
-        "fossah://add?repo=https://user:secret@github.com/a/b&repo=https://github.com/pallets/click&repo=not-a-repo",
+        "idlehand://add?repo=https://user:secret@github.com/a/b&repo=https://github.com/pallets/click&repo=not-a-repo",
     )
     assert added == ["https://github.com/pallets/click"]
     stored = (home / "trust.json").read_text(encoding="utf-8")
@@ -113,12 +113,12 @@ def test_one_bad_repo_does_not_drop_the_rest_and_analytics_shows_why(tmp_path: P
     assert "refused link" in text
     assert "secret" not in text
     with pytest.raises(LinkError):
-        apply_link(home, "fossah://add?repo=not-a-repo")
+        apply_link(home, "idlehand://add?repo=not-a-repo")
     assert "https://github.com/pallets/click" in [repo["url"] for repo in load_sources(home)]
 
 
 def test_list_file_keeps_good_lines_and_catalog_is_recorded(tmp_path: Path) -> None:
-    from fossah.trust import MAX_DECISIONS, load_trust, remember, decision
+    from idlehand.trust import MAX_DECISIONS, load_trust, remember, decision
 
     listing = tmp_path / "repos.txt"
     listing.write_text(
@@ -129,7 +129,7 @@ def test_list_file_keeps_good_lines_and_catalog_is_recorded(tmp_path: Path) -> N
     )
     home = tmp_path / "home"
     ensure_home(home)
-    added = apply_link(home, f"fossah://add?list={listing.as_uri()}")
+    added = apply_link(home, f"idlehand://add?list={listing.as_uri()}")
     assert added == ["https://github.com/pallets/flask"]
     stored = (home / "trust.json").read_text(encoding="utf-8")
     assert "secret" not in stored
@@ -137,7 +137,7 @@ def test_list_file_keeps_good_lines_and_catalog_is_recorded(tmp_path: Path) -> N
     assert any("credentials" in reason for reason in reasons)
     assert any("http or https" in reason for reason in reasons)
     with pytest.raises(LinkError, match="catalog"):
-        apply_link(home, "fossah://add?catalog=https://fossah.example/directory&repo=https://github.com/a/b")
+        apply_link(home, "idlehand://add?catalog=https://idlehand.example/directory&repo=https://github.com/a/b")
     assert any("catalog" in item["reason"] for item in load_trust(home))
     assert "https://github.com/a/b" not in [repo["url"] for repo in load_sources(home)]
     for index in range(MAX_DECISIONS + 5):
@@ -150,7 +150,7 @@ def test_list_file_keeps_good_lines_and_catalog_is_recorded(tmp_path: Path) -> N
 
 
 def test_empty_list_and_mixed_json_are_visible(tmp_path: Path) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     empty = tmp_path / "empty.txt"
     empty.write_text("# nothing here\n\n", encoding="utf-8")
@@ -158,7 +158,7 @@ def test_empty_list_and_mixed_json_are_visible(tmp_path: Path) -> None:
     ensure_home(home)
     before = [repo["url"] for repo in load_sources(home)]
     with pytest.raises(LinkError, match="no repositories"):
-        apply_link(home, f"fossah://add?list={empty.as_uri()}")
+        apply_link(home, f"idlehand://add?list={empty.as_uri()}")
     assert [repo["url"] for repo in load_sources(home)] == before
     assert any(item["reason"] == "the list file has no repositories" for item in load_trust(home))
     mixed = tmp_path / "mixed.json"
@@ -166,7 +166,7 @@ def test_empty_list_and_mixed_json_are_visible(tmp_path: Path) -> None:
         json.dumps({"repos": [{"url": "https://github.com/encode/httpx"}, {"name": "missing"}, "ftp://example.com/nope"]}),
         encoding="utf-8",
     )
-    added = apply_link(home, f"fossah://add?list={mixed.as_uri()}")
+    added = apply_link(home, f"idlehand://add?list={mixed.as_uri()}")
     assert added == ["https://github.com/encode/httpx"]
     reasons = [item["reason"] for item in load_trust(home) if not item["accepted"]]
     assert any("needs a URL" in reason for reason in reasons)
@@ -174,29 +174,29 @@ def test_empty_list_and_mixed_json_are_visible(tmp_path: Path) -> None:
 
 
 def test_credential_list_url_and_oversized_list_are_refused(tmp_path: Path) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     home = tmp_path / "home"
     ensure_home(home)
     before = [repo["url"] for repo in load_sources(home)]
     with pytest.raises(LinkError, match="credentials"):
-        apply_link(home, "fossah://add?list=https://user:secret@example.com/repos.txt")
+        apply_link(home, "idlehand://add?list=https://user:secret@example.com/repos.txt")
     stored = (home / "trust.json").read_text(encoding="utf-8")
     assert "secret" not in stored
     assert any("credentials" in item["reason"] for item in load_trust(home))
     big = tmp_path / "big.txt"
     big.write_bytes(b"https://github.com/org/name\n" * 80_000)
     with pytest.raises(LinkError, match="1MB"):
-        apply_link(home, f"fossah://add?list={big.as_uri()}")
+        apply_link(home, f"idlehand://add?list={big.as_uri()}")
     assert [repo["url"] for repo in load_sources(home)] == before
     array = tmp_path / "array.json"
     array.write_text(json.dumps(["https://github.com/pallets/jinja", {"url": "notaurl"}]), encoding="utf-8")
-    added = apply_link(home, f"fossah://add?list={array.as_uri()}")
+    added = apply_link(home, f"idlehand://add?list={array.as_uri()}")
     assert added == ["https://github.com/pallets/jinja"]
 
 
 def test_redirected_list_is_refused(tmp_path: Path) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -216,7 +216,7 @@ def test_redirected_list_is_refused(tmp_path: Path) -> None:
     before = [repo["url"] for repo in load_sources(home)]
     try:
         with pytest.raises(LinkError, match="redirect"):
-            apply_link(home, f"fossah://add?list=http://127.0.0.1:{port}/list.txt")
+            apply_link(home, f"idlehand://add?list=http://127.0.0.1:{port}/list.txt")
     finally:
         server.shutdown()
         server.server_close()
@@ -225,7 +225,7 @@ def test_redirected_list_is_refused(tmp_path: Path) -> None:
 
 
 def test_non_utf8_list_is_refused_without_storing_the_bytes(tmp_path: Path) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     listing = tmp_path / "repos.txt"
     listing.write_bytes(b"\xff\xfesekret-bytes")
@@ -233,7 +233,7 @@ def test_non_utf8_list_is_refused_without_storing_the_bytes(tmp_path: Path) -> N
     ensure_home(home)
     before = [repo["url"] for repo in load_sources(home)]
     with pytest.raises(LinkError, match="UTF-8"):
-        apply_link(home, f"fossah://add?list={listing.as_uri()}")
+        apply_link(home, f"idlehand://add?list={listing.as_uri()}")
     assert [repo["url"] for repo in load_sources(home)] == before
     blob = (home / "trust.json").read_text(encoding="utf-8")
     assert "sekret-bytes" not in blob
@@ -245,18 +245,18 @@ def test_file_list_and_json(tmp_path: Path) -> None:
     listing.write_text(json.dumps({"repos": [{"url": "https://github.com/encode/httpx"}]}), encoding="utf-8")
     home = tmp_path / "home"
     ensure_home(home)
-    added = apply_link(home, f"fossah://add?list={listing.as_uri()}")
+    added = apply_link(home, f"idlehand://add?list={listing.as_uri()}")
     assert added == ["https://github.com/encode/httpx"]
 
 
 def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> None:
-    from fossah.trust import load_trust
+    from idlehand.trust import load_trust
 
     home = tmp_path / "home"
     ensure_home(home)
     added = apply_link(
         home,
-        "fossah://add?repo=https://github.com/org/repo?access_token=sekret&repo=https://github.com/pallets/click",
+        "idlehand://add?repo=https://github.com/org/repo?access_token=sekret&repo=https://github.com/pallets/click",
     )
     assert added == ["https://github.com/pallets/click"]
     stored = (home / "sources.toml").read_text(encoding="utf-8") + (home / "trust.json").read_text(encoding="utf-8")
@@ -266,14 +266,14 @@ def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> Non
     assert any("credentials" in item["reason"] for item in refused)
     before = [repo["url"] for repo in load_sources(home)]
     with pytest.raises(LinkError, match="credentials"):
-        apply_link(home, "fossah://add?repo=https://example.com?token=sekret")
+        apply_link(home, "idlehand://add?repo=https://example.com?token=sekret")
     with pytest.raises(LinkError, match="credentials"):
-        apply_link(home, "fossah://add?list=http://127.0.0.1:9/repos.txt?token=sekret")
+        apply_link(home, "idlehand://add?list=http://127.0.0.1:9/repos.txt?token=sekret")
     with pytest.raises(LinkError, match="credentials"):
-        apply_link(home, "fossah://add?repo=https://github.com/org/repo.git%23access_token=sekret")
+        apply_link(home, "idlehand://add?repo=https://github.com/org/repo.git%23access_token=sekret")
     added = apply_link(
         home,
-        "fossah://add?repo=https://user:nl-sec%0Aret-value@github.com/a/b&repo=https://github.com/pallets/flask",
+        "idlehand://add?repo=https://user:nl-sec%0Aret-value@github.com/a/b&repo=https://github.com/pallets/flask",
     )
     assert added == ["https://github.com/pallets/flask"]
     blob = (home / "trust.json").read_text(encoding="utf-8") + (home / "sources.toml").read_text(encoding="utf-8")
@@ -286,7 +286,7 @@ def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> Non
         "HOSTKEYMATERIAL\n",
         encoding="utf-8",
     )
-    added = apply_link(home, f"fossah://add?list={listing.as_uri()}")
+    added = apply_link(home, f"idlehand://add?list={listing.as_uri()}")
     assert "https://github.com/pallets/jinja" in added
     blob = (home / "trust.json").read_text(encoding="utf-8") + (home / "sources.toml").read_text(encoding="utf-8")
     assert "HOSTKEYMATERIAL" not in blob
@@ -296,21 +296,21 @@ def test_credential_query_and_key_material_are_not_stored(tmp_path: Path) -> Non
 
 
 def test_encoded_link_text_is_not_stored(tmp_path: Path) -> None:
-    from fossah.analytics import render_text
+    from idlehand.analytics import render_text
 
     home = tmp_path / "home"
     ensure_home(home)
-    with pytest.raises(LinkError, match="unsupported Fossah link action$"):
-        apply_link(home, "fossah://password=sekret")
-    with pytest.raises(LinkError, match="unsupported Fossah link action$"):
-        apply_link(home, "fossah://BEGIN%20OPENSSH%20PRIVATE%20KEY")
+    with pytest.raises(LinkError, match="unsupported IdleHand link action$"):
+        apply_link(home, "idlehand://password=sekret")
+    with pytest.raises(LinkError, match="unsupported IdleHand link action$"):
+        apply_link(home, "idlehand://BEGIN%20OPENSSH%20PRIVATE%20KEY")
     with pytest.raises(LinkError, match="credentials"):
-        apply_link(home, "fossah://add?repo=https://github.com/org/repo.git%3Ftoken%3Dsekret")
-    added = apply_link(home, "fossah://add?repo=https://github.com/org/my%2Drepo")
+        apply_link(home, "idlehand://add?repo=https://github.com/org/repo.git%3Ftoken%3Dsekret")
+    added = apply_link(home, "idlehand://add?repo=https://github.com/org/my%2Drepo")
     assert added == ["https://github.com/org/my-repo"]
     blob = (home / "trust.json").read_text(encoding="utf-8") + (home / "sources.toml").read_text(encoding="utf-8")
     blob += render_text(home)
     assert "sekret" not in blob
     assert "PRIVATE KEY" not in blob
     assert "BEGIN" not in blob
-    assert "unsupported Fossah link action" in blob
+    assert "unsupported IdleHand link action" in blob

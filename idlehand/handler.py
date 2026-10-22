@@ -1,4 +1,4 @@
-"""Register the fossah: URL scheme when the desktop environment allows it."""
+"""Register the idlehand: URL scheme when the desktop environment allows it."""
 
 from __future__ import annotations
 
@@ -16,22 +16,22 @@ def _desktop_quote(value: str) -> str:
 
 
 def handler_exec() -> str:
-    found = shutil.which("fossah")
+    found = shutil.which("idlehand")
     if found:
         return f"{_desktop_quote(found)} %u"
-    return f"{_desktop_quote(sys.executable)} -m fossah %u"
+    return f"{_desktop_quote(sys.executable)} -m idlehand %u"
 
 
 def desktop_file_text() -> str:
     return (
         "[Desktop Entry]\n"
-        "Name=Fossah\n"
-        "Comment=Add repositories from a Fossah link\n"
+        "Name=IdleHand\n"
+        "Comment=Add repositories from an IdleHand link\n"
         f"Exec={handler_exec()}\n"
         "Type=Application\n"
         "Terminal=false\n"
         "NoDisplay=true\n"
-        "MimeType=x-scheme-handler/fossah;\n"
+        "MimeType=x-scheme-handler/idlehand;\n"
     )
 
 
@@ -44,7 +44,7 @@ def _config_home() -> Path:
 
 
 def _merge_mimeapps(path: Path) -> None:
-    key = "x-scheme-handler/fossah=fossah.desktop"
+    key = "x-scheme-handler/idlehand=idlehand.desktop"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if key in existing:
         return
@@ -76,13 +76,13 @@ def register_protocol_handler() -> str:
     try:
         desktop_dir = _data_home() / "applications"
         desktop_dir.mkdir(parents=True, exist_ok=True)
-        desktop = desktop_dir / "fossah.desktop"
+        desktop = desktop_dir / "idlehand.desktop"
         desktop.write_text(desktop_file_text(), encoding="utf-8")
         _merge_mimeapps(_config_home() / "mimeapps.list")
         xdg = shutil.which("xdg-mime")
         if xdg:
             subprocess.run(
-                [xdg, "default", "fossah.desktop", "x-scheme-handler/fossah"],
+                [xdg, "default", "idlehand.desktop", "x-scheme-handler/idlehand"],
                 check=False,
                 capture_output=True,
                 text=True,

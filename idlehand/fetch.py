@@ -207,7 +207,7 @@ def clone_repository(
     if scheme in {"file", ""}:
         command.extend(["-c", "protocol.file.allow=always"])
     command.extend(["clone", "--depth", "1", "--no-tags", "--", allowed, str(workspace)])
-    empty_home = Path(tempfile.mkdtemp(prefix="fossah-fetch-"))
+    empty_home = Path(tempfile.mkdtemp(prefix="idlehand-fetch-"))
     try:
         try:
             completed = subprocess.run(

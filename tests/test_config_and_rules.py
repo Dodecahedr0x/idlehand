@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fossah.config import (
+from idlehand.config import (
     DEFAULT_SPENDING_LIMIT_TOKENS,
     ensure_home,
     load_config,
@@ -24,7 +24,7 @@ def test_defaults_are_open_and_small(tmp_path: Path) -> None:
     assert "owned" not in config["rules"]
     repos = load_sources(home)
     assert len(repos) == 2
-    assert all(repo["url"].startswith("https://example.com/fossah/") for repo in repos)
+    assert all(repo["url"].startswith("https://example.com/idlehand/") for repo in repos)
 
 
 def test_limit_roundtrip(tmp_path: Path) -> None:
@@ -42,7 +42,7 @@ def test_limit_roundtrip(tmp_path: Path) -> None:
 
 
 def test_source_has_no_ownership_gate() -> None:
-    root = Path(__file__).resolve().parents[1] / "fossah"
+    root = Path(__file__).resolve().parents[1] / "idlehand"
     text = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.py"))
     assert "unowned" not in text
     assert "allow_issues_on_unowned" not in text

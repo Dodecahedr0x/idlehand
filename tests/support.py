@@ -44,10 +44,10 @@ def make_repo(path: Path, files: dict[str, str]) -> str:
         "HOME": str(home),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_AUTHOR_NAME": "fossah",
-        "GIT_AUTHOR_EMAIL": "fossah@example.com",
-        "GIT_COMMITTER_NAME": "fossah",
-        "GIT_COMMITTER_EMAIL": "fossah@example.com",
+        "GIT_AUTHOR_NAME": "idlehand",
+        "GIT_AUTHOR_EMAIL": "idlehand@example.com",
+        "GIT_COMMITTER_NAME": "idlehand",
+        "GIT_COMMITTER_EMAIL": "idlehand@example.com",
     }
     for args in (["init"], ["add", "."], ["commit", "-m", "init"]):
         subprocess.run(

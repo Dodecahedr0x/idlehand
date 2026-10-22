@@ -13,11 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fossah.config import load_peers, save_peers
-from fossah.fetch import embeds_credentials, public_url
-from fossah.home import home_lock
-from fossah.links import LinkError, fetch_text
-from fossah.trust import decision, public_subject
+from idlehand.config import load_peers, save_peers
+from idlehand.fetch import embeds_credentials, public_url
+from idlehand.home import home_lock
+from idlehand.links import LinkError, fetch_text
+from idlehand.trust import decision, public_subject
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -133,7 +133,7 @@ def review_second_degree(
     max_new = _heuristic_count(heuristic.get("max_new_peers_per_cycle", 5))
     max_peers = _heuristic_count(heuristic.get("max_peers", 50))
     if min_endorsements is None or max_new is None or max_peers is None:
-        return [], [decision("peer", "fossah://peer-heuristic", False, "peer heuristic is unreadable")]
+        return [], [decision("peer", "idlehand://peer-heuristic", False, "peer heuristic is unreadable")]
     room = max(0, max_peers - len(existing_urls))
     limit = min(max_new, room)
     direct_urls: set[str] = set()
@@ -269,7 +269,7 @@ def publish_document(
 ) -> dict[str, Any]:
     """Public document. No subscription, spending, or home path."""
     return {
-        "fossah": 1,
+        "idlehand": 1,
         "node_id": node_id,
         "listen_url": listen_url,
         "peers": [

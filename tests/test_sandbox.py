@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from fossah.sandbox import build_bwrap_argv, build_container_argv, run, run_namespace
+from idlehand.sandbox import build_bwrap_argv, build_container_argv, run, run_namespace
 
 
 def test_namespace_hides_home_credentials_and_network(tmp_path: Path, monkeypatch) -> None:
@@ -21,7 +21,7 @@ print("SECRET_ENV", "ANTHROPIC_API_KEY" in os.environ or "GH_TOKEN" in os.enviro
 print("HOST_SECRET", pathlib.Path({str(secret)!r}).exists())
 print("ROOT", ",".join(sorted(os.listdir("/"))))
 try:
-    pathlib.Path("/usr/bin/pwned-fossah").write_text("x")
+    pathlib.Path("/usr/bin/pwned-idlehand").write_text("x")
     print("USR_WRITE", "yes")
 except Exception as exc:
     print("USR_WRITE", type(exc).__name__)
@@ -33,7 +33,7 @@ try:
 except Exception as exc:
     print("NET", type(exc).__name__)
 pathlib.Path("/work/out.txt").write_text("ok\\n", encoding="utf-8")
-print("fossah-sandbox-ok")
+print("idlehand-sandbox-ok")
 """
     result = run_namespace(workspace, ["/usr/bin/python3", "-c", code])
     assert result.ok, result.stderr
@@ -45,9 +45,9 @@ print("fossah-sandbox-ok")
     assert "sk-test-secret" not in result.stdout
     assert "USR_WRITE yes" not in result.stdout
     assert "NET yes" not in result.stdout
-    assert "fossah-sandbox-ok" in result.stdout
+    assert "idlehand-sandbox-ok" in result.stdout
     assert (workspace / "out.txt").read_text(encoding="utf-8") == "ok\n"
-    assert not Path("/usr/bin/pwned-fossah").exists()
+    assert not Path("/usr/bin/pwned-idlehand").exists()
     assert secret.read_text(encoding="utf-8") == "topsecret"
 
 

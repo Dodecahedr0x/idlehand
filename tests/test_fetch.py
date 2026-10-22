@@ -2,7 +2,7 @@ import os
 import stat
 from pathlib import Path
 
-from fossah.fetch import classify_clone_url, clone_repository, git_env, redact_clone_url
+from idlehand.fetch import classify_clone_url, clone_repository, git_env, redact_clone_url
 
 
 def test_classify_refuses_ssh_and_embedded_credentials() -> None:
@@ -24,7 +24,7 @@ def test_classify_refuses_ssh_and_embedded_credentials() -> None:
 
 
 def test_scrub_secrets_keeps_the_following_line() -> None:
-    from fossah.fetch import scrub_secrets
+    from idlehand.fetch import scrub_secrets
 
     text = scrub_secrets("https://user:sekret@github.com/org/repo.git\nfiles=1\n")
     assert text == "https://github.com/org/repo.git\nfiles=1"
@@ -43,10 +43,10 @@ def test_fragment_credentials_are_refused_and_redacted() -> None:
 
 
 def test_redact_clone_url_strips_userinfo_and_token_query() -> None:
-    from fossah.fetch import redact_clone_url
+    from idlehand.fetch import redact_clone_url
 
     assert redact_clone_url("https://user:secret@github.com/org/repo.git") == "https://github.com/org/repo.git"
-    assert redact_clone_url("https://user:secret@[::1]:443/fossah/publish") == "https://[::1]:443/fossah/publish"
+    assert redact_clone_url("https://user:secret@[::1]:443/idlehand/publish") == "https://[::1]:443/idlehand/publish"
     assert "sekret" not in redact_clone_url("https://github.com/org/repo.git?access_token=sekret")
     assert redact_clone_url("file:///tmp/repo") == "file:///tmp/repo"
     assert redact_clone_url("https://github.com/org/repo.git") == "https://github.com/org/repo.git"
@@ -109,7 +109,7 @@ def test_git_environment_drops_home_and_credentials(tmp_path: Path, monkeypatch)
     assert "SSH_AUTH_SOCK=" in text
     cwd = cwd_file.read_text(encoding="utf-8").strip()
     assert cwd != str(Path.home())
-    assert "fossah-fetch-" in cwd
+    assert "idlehand-fetch-" in cwd
     assert not Path(cwd).exists()
     dumped = git_env(tmp_path / "empty")
     assert "ANTHROPIC_API_KEY" not in dumped
@@ -292,19 +292,19 @@ def test_absolute_local_path_clones_and_a_relative_path_does_not(tmp_path: Path)
 def test_publish_document_redacts_embedded_credentials() -> None:
     import json
 
-    from fossah.peers import publish_document
+    from idlehand.peers import publish_document
 
     document = publish_document(
         node_id="n",
-        listen_url="http://127.0.0.1:9/fossah/publish",
-        peers=[{"url": "https://user:secret@peer.example/fossah/publish", "id": "p"}],
+        listen_url="http://127.0.0.1:9/idlehand/publish",
+        peers=[{"url": "https://user:secret@peer.example/idlehand/publish", "id": "p"}],
         repos=[{"url": "https://github.com/org/repo.git?access_token=sekret"}],
     )
     blob = json.dumps(document)
     assert "secret" not in blob
     assert "sekret" not in blob
     assert document["repos"] == [{"url": "https://github.com/org/repo.git"}]
-    assert document["peers"] == [{"url": "https://peer.example/fossah/publish", "id": "p"}]
+    assert document["peers"] == [{"url": "https://peer.example/idlehand/publish", "id": "p"}]
 
 
 def test_publish_endpoint_does_not_follow_a_symlink(tmp_path: Path) -> None:
@@ -313,7 +313,7 @@ def test_publish_endpoint_does_not_follow_a_symlink(tmp_path: Path) -> None:
     import urllib.request
     from http.server import ThreadingHTTPServer
 
-    from fossah.publish import PublishHandler
+    from idlehand.publish import PublishHandler
 
     home = tmp_path / "home"
     home.mkdir()
@@ -328,7 +328,7 @@ def test_publish_endpoint_does_not_follow_a_symlink(tmp_path: Path) -> None:
     port = server.server_address[1]
     try:
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/fossah/publish", timeout=2)
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/idlehand/publish", timeout=2)
             code = 200
             body = ""
         except urllib.error.HTTPError as exc:
@@ -349,14 +349,14 @@ def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
     import urllib.request
     from http.server import ThreadingHTTPServer
 
-    from fossah.home import write_json
-    from fossah.publish import PublishHandler
+    from idlehand.home import write_json
+    from idlehand.publish import PublishHandler
 
     home = tmp_path / "home"
     home.mkdir()
     write_json(
         home / "publish.json",
-        {"fossah": 1, "peers": [], "repos": [{"url": "https://github.com/org/name"}]},
+        {"idlehand": 1, "peers": [], "repos": [{"url": "https://github.com/org/name"}]},
     )
     write_json(home / "trust.json", [{"subject": "secret-decision", "reason": "hidden"}])
     write_json(home / "state.json", {"ledger": {"metered_tokens": 99}, "subscription": {"binary": "claude"}})
@@ -366,7 +366,7 @@ def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
     thread.start()
     port = server.server_address[1]
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/fossah/publish", timeout=2) as response:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/idlehand/publish", timeout=2) as response:
             body = response.read().decode("utf-8")
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/trust.json", timeout=2)
@@ -377,7 +377,7 @@ def test_publish_body_does_not_include_trust_or_ledger(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
     payload = json.loads(body)
-    assert payload["fossah"] == 1
+    assert payload["idlehand"] == 1
     assert "secret-decision" not in body
     assert "metered_tokens" not in body
     assert missing_code == 404
@@ -401,7 +401,7 @@ def test_local_clone_and_non_repo(tmp_path: Path) -> None:
 
 
 def test_percent_encoded_credentials_are_not_a_public_clone() -> None:
-    from fossah.fetch import classify_clone_url, embeds_credentials, scrub_secrets
+    from idlehand.fetch import classify_clone_url, embeds_credentials, scrub_secrets
 
     encoded = [
         "https://github.com/org/repo.git%3Ftoken%3Dsekret",

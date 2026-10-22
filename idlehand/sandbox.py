@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from fossah.fetch import scrub_secrets
+from idlehand.fetch import scrub_secrets
 
 
 def _stored_output(text: str, limit: int) -> str:
@@ -75,7 +75,7 @@ def probe_script() -> str:
     return (
         "from pathlib import Path\n"
         "Path('sandbox-ok.txt').write_text('ok\\n')\n"
-        "print('fossah-sandbox-ok')\n"
+        "print('idlehand-sandbox-ok')\n"
     )
 
 
@@ -250,7 +250,7 @@ def run_namespace(workspace: Path, command: list[str], timeout: float = 30) -> S
         mapped = prepare_host_command(command, workspace)
     except SandboxError as exc:
         return _refused("namespace", str(exc), command)
-    argv = [sys.executable, "-m", "fossah.jail", "--workspace", str(workspace.resolve()), "--", *mapped]
+    argv = [sys.executable, "-m", "idlehand.jail", "--workspace", str(workspace.resolve()), "--", *mapped]
     process = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
@@ -258,7 +258,7 @@ def run_namespace(workspace: Path, command: list[str], timeout: float = 30) -> S
         text=True,
         env=_clean_helper_env(),
     )
-    scratch = Path(f"/tmp/fossah-jail-{process.pid}")
+    scratch = Path(f"/tmp/idlehand-jail-{process.pid}")
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:

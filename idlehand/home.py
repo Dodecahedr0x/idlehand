@@ -1,4 +1,4 @@
-"""Fossah home directory, file lock, and TOML helpers."""
+"""IdleHand home directory, file lock, and TOML helpers."""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ from typing import Any, Iterator
 def resolve_home(explicit: str | None = None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
-    env = os.environ.get("FOSSAH_HOME")
+    env = os.environ.get("IDLEHAND_HOME")
     if env:
         return Path(env).expanduser().resolve()
-    return (Path.home() / ".fossah").resolve()
+    return (Path.home() / ".idlehand").resolve()
 
 
 @contextmanager

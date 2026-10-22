@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fossah.usage import parse_reported_tokens, plan_with_claude
+from idlehand.usage import parse_reported_tokens, plan_with_claude
 
 
 def test_parse_reported_tokens_from_a_result_object() -> None:

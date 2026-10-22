@@ -1,10 +1,8 @@
-# Fossah
+# IdleHand
 
-Fossah means Free and Open Source Software At Home.
+People who still have credits on Claude, Codex, or Cursor can point those subscriptions at open source. IdleHand runs a local node. The node holds your config, watches a spending limit, and keeps a contribution loop. It uses the credits on the CLI you already have. It does not bill a separate API.
 
-People who still have credits on Claude, Codex, or Cursor can point those subscriptions at open source. Fossah runs a local node. The node holds your config, watches a spending limit, and keeps a contribution loop. It uses the credits on the CLI you already have. It does not bill a separate API.
-
-Discovery stays on your machine. There is no Fossah catalog.
+Discovery stays on your machine. There is no IdleHand catalog.
 
 ## Install
 
@@ -12,31 +10,31 @@ Discovery stays on your machine. There is no Fossah catalog.
 python3 -m pip install -e .
 ```
 
-Python 3.11 or newer is enough. The package has no runtime dependencies. If the `fossah` script is not on your `PATH`, run `python3 -m fossah` instead.
+Python 3.11 or newer is enough. The package has no runtime dependencies. If the `idlehand` script is not on your `PATH`, run `python3 -m idlehand` instead.
 
 ## Basic path
 
 ```bash
-fossah init
-fossah connect claude
-fossah analytics
+idlehand init
+idlehand connect claude
+idlehand analytics
 ```
 
 `connect` accepts `claude`, `codex`, or `cursor`. It starts the node and leaves it running. As soon as that CLI is on `PATH`, the contribution loop starts under the default spending limit.
 
 ```bash
-fossah status
-fossah stop
+idlehand status
+idlehand stop
 ```
 
-The home directory is `~/.fossah`, or `$FOSSAH_HOME` if that is set.
+The home directory is `~/.idlehand`, or `$IDLEHAND_HOME` if that is set.
 
-If `claude`, `codex`, `cursor-agent`, `agent`, or `cursor` is not installed, the node still stays up. `fossah analytics` says the subscription is not connected, and it does not record a contribution. A dry loop is available:
+If `claude`, `codex`, `cursor-agent`, `agent`, or `cursor` is not installed, the node still stays up. `idlehand analytics` says the subscription is not connected, and it does not record a contribution. A dry loop is available:
 
 ```bash
-fossah demo
-fossah analytics
-fossah stop
+idlehand demo
+idlehand analytics
+idlehand stop
 ```
 
 Demo plans are labeled demo. A demo cycle can clone a repository and run the sandboxed command, and it still does not record a contribution. It also does not invoke the subscription CLI. When Claude reports token usage, analytics shows that reported total. When it does not, the total is labeled as a local estimate. Codex and Cursor are not invoked.
@@ -45,13 +43,13 @@ Demo plans are labeled demo. A demo cycle can clone a repository and run the san
 
 | Setting | Default |
 | --- | --- |
-| Spending limit | 10,000 tokens (`fossah limit 20000` changes it) |
+| Spending limit | 10,000 tokens (`idlehand limit 20000` changes it) |
 | Estimate per cycle | 2,500 tokens |
 | Contribution rules | open: test, audit, issues, and pull requests |
 | Ownership gate | none |
 | Loop | starts when a subscription is connected |
-| Source list | `sources.toml` in the Fossah home, two example repos you can replace |
-| Listen address | `127.0.0.1:47321`, path `/fossah/publish` |
+| Source list | `sources.toml` in the IdleHand home, two example repos you can replace |
+| Listen address | `127.0.0.1:47321`, path `/idlehand/publish` |
 | Peer heuristic | add a second-degree peer after 1 endorsement, at most 5 new peers per cycle, at most 50 peers |
 | Sandbox | Docker, then Podman, then the built-in namespace jail, then bubblewrap |
 
@@ -60,35 +58,35 @@ The loop stops before another cycle would pass the spending limit. Raise the lim
 Rules can be turned off:
 
 ```bash
-fossah rules show
-fossah rules set allow_issues false
+idlehand rules show
+idlehand rules set allow_issues false
 ```
 
 ## Discovery
 
-Three local mechanisms. None of them asks a Fossah service.
+Three local mechanisms. None of them asks an IdleHand service.
 
-**Source list.** `fossah sources` prints `sources.toml`. Edit it. The node reloads it.
+**Source list.** `idlehand sources` prints `sources.toml`. Edit it. The node reloads it.
 
 **Links add repos.** The link carries the repos, or it points at a file the publisher hosts:
 
 ```bash
-fossah link 'fossah://add?repo=https://github.com/pallets/click&repo=https://github.com/encode/httpx'
-fossah link 'fossah://add?list=https://example.com/fossah-repos.txt'
+idlehand link 'idlehand://add?repo=https://github.com/pallets/click&repo=https://github.com/encode/httpx'
+idlehand link 'idlehand://add?list=https://example.com/idlehand-repos.txt'
 ```
 
-A bare `fossah:` URL works too, which is what a desktop handler passes. On Linux, `fossah init` registers an `x-scheme-handler/fossah` handler when the XDG directories can be written. A `list` URL is fetched from the host in the link. Redirects are not followed. One bad repository URL does not drop the others. `fossah analytics` shows whether each URL was accepted or refused, and why.
+A bare `idlehand:` URL works too, which is what a desktop handler passes. On Linux, `idlehand init` registers an `x-scheme-handler/idlehand` handler when the XDG directories can be written. A `list` URL is fetched from the host in the link. Redirects are not followed. One bad repository URL does not drop the others. `idlehand analytics` shows whether each URL was accepted or refused, and why.
 
 A list file is one repository URL per line (`#` starts a comment), or JSON: `{"repos": ["https://github.com/org/name"]}`.
 
 **Peers add peers.** This path does not add repos.
 
 ```bash
-fossah peer add 'https://peer.example/fossah/publish'
-fossah peer list
+idlehand peer add 'https://peer.example/idlehand/publish'
+idlehand peer list
 ```
 
-The node publishes its own peer list and repo list at `/fossah/publish`. It fetches that document from peers you already have. A second-degree peer is added only when the heuristic says so:
+The node publishes its own peer list and repo list at `/idlehand/publish`. It fetches that document from peers you already have. A second-degree peer is added only when the heuristic says so:
 
 - `min_endorsements` (1): distinct direct peers that must list them
 - `max_new_peers_per_cycle` (5)
@@ -104,13 +102,13 @@ The listen port is bound to loopback until you change `publish.host`.
 
 ## Sandbox
 
-Repository commands run in a container when Docker or Podman is installed. Otherwise Fossah uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no network, and a cleared environment. Home, credentials, and the rest of the host filesystem are not mounted. If no runtime can start, Fossah refuses the command instead of running it on the host.
+Repository commands run in a container when Docker or Podman is installed. Otherwise IdleHand uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no network, and a cleared environment. Home, credentials, and the rest of the host filesystem are not mounted. If no runtime can start, IdleHand refuses the command instead of running it on the host.
 
 The contribution loop clones one repository from the local source list, then runs the action in that sandbox. The clone itself stays outside the sandbox: public http(s) URLs, or a local path the source list already names. SSH URLs and URLs with embedded credentials are refused. Subscription CLIs stay outside the sandbox. Their credentials are not copied into it.
 
 ```bash
-fossah sandbox spec
-fossah sandbox run
+idlehand sandbox spec
+idlehand sandbox run
 ```
 
 `sandbox run` executes a local probe. It does not clone a repository and it is not a contribution.
@@ -125,9 +123,9 @@ Real:
 - a contribution recorded only after that sandboxed command has run
 - a 10,000 token limit that stops the loop before the next cycle's estimate would pass it
 - Claude usage metered when that CLI reports it, otherwise a labeled local estimate
-- `fossah analytics`
+- `idlehand analytics`
 - the loop starting after a subscription CLI is connected
-- `fossah:` links, including a direct fetch of a publisher list file
+- `idlehand:` links, including a direct fetch of a publisher list file
 - Linux protocol-handler registration
 - peer publish endpoint, direct fetch, and the peers-of-peers heuristic
 - container command line, and the namespace jail when Docker and Podman are absent
@@ -135,7 +133,7 @@ Real:
 Not done in this slice:
 
 - Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
-- Issue and pull request drafts are copied into the Fossah home. Nothing is pushed. `contributions pushed` stays at 0.
+- Issue and pull request drafts are copied into the IdleHand home. Nothing is pushed. `contributions pushed` stays at 0.
 - Demo output is not a contribution.
 
 ## Tests
