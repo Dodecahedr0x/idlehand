@@ -161,6 +161,34 @@ def test_cli_link_limit_and_handler(tmp_path: Path, monkeypatch) -> None:
     assert status == "registered"
 
 
+def test_cli_link_keeps_good_repos_and_fails_when_all_are_refused(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("FOSSAH_HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    from fossah.cli import main
+    from fossah.trust import load_trust
+
+    mixed = main(
+        [
+            "--home",
+            str(home),
+            "link",
+            "fossah://add?repo=https://github.com/pallets/click&repo=https://user:secret@github.com/org/hidden",
+        ]
+    )
+    assert mixed == 0
+    assert "https://github.com/pallets/click" in (home / "sources.toml").read_text(encoding="utf-8")
+    assert "secret" not in (home / "trust.json").read_text(encoding="utf-8")
+    assert any(item["accepted"] for item in load_trust(home))
+    assert any(not item["accepted"] and "credentials" in item["reason"] for item in load_trust(home))
+    refused = main(["--home", str(home), "link", "fossah://add?repo=not-a-repo"])
+    assert refused == 1
+    bare = main(["fossah://add?repo=git@github.com:org/nope.git"])
+    assert bare == 1
+    assert "https://github.com/pallets/click" in (home / "sources.toml").read_text(encoding="utf-8")
+
+
 def test_bare_fossah_url(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("FOSSAH_HOME", str(home))

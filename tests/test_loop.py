@@ -108,6 +108,27 @@ def test_connected_loop_runs_sandboxed_actions_without_the_cli(tmp_path: Path, m
     assert "contributed=yes" in text
 
 
+def test_zero_limit_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["spending_limit_tokens"] = 0
+    config["estimate_tokens_per_cycle"] = 100
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["status"] == "stopped"
+    assert state["loop"]["reason"] == "spending limit reached"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert state["contributions_pushed"] == 0
+    assert not (home / "workspaces").exists() or not any((home / "workspaces").iterdir())
+    assert not invoked.exists()
+
+
 def test_missing_cli_does_not_pretend_to_contribute(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
