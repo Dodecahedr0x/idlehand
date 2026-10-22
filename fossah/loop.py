@@ -66,7 +66,7 @@ def fresh_state(config: dict[str, Any]) -> dict[str, Any]:
         "ledger": {
             "estimated_tokens": 0,
             "metered_tokens": 0,
-            "limit_tokens": int(config["spending_limit_tokens"]),
+            "limit_tokens": _limit_of(config) or 0,
             "metering": "local-estimate",
         },
         "plans": [],
@@ -89,6 +89,11 @@ def _ledger_count(value: object) -> int | None:
     return value
 
 
+def _limit_of(config: dict[str, Any]) -> int | None:
+    """The spending limit, or None when the setting is not a non-negative integer."""
+    return _ledger_count(config.get("spending_limit_tokens"))
+
+
 def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     broken = False
     try:
@@ -97,7 +102,7 @@ def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
         raw = None
         broken = True
     state = fresh_state(config)
-    limit = max(int(config["spending_limit_tokens"]), 0)
+    limit = _limit_of(config) or 0
     if broken or (raw is not None and not isinstance(raw, dict)):
         state["ledger"]["estimated_tokens"] = limit
         state["loop"]["status"] = "stopped"
@@ -143,7 +148,7 @@ def load_state(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     peers_runtime = raw.get("peers_runtime")
     if isinstance(peers_runtime, dict):
         state["peers_runtime"].update(peers_runtime)
-    state["ledger"]["limit_tokens"] = int(config["spending_limit_tokens"])
+    state["ledger"]["limit_tokens"] = _limit_of(config) or 0
     if state["ledger"]["metering"] not in {"local-estimate", "reported", "mixed"}:
         state["ledger"]["metering"] = "local-estimate"
     return state
@@ -287,7 +292,12 @@ def _prepare_cycle(
     rules = config["rules"]
     cycles = int(state["loop"]["cycles"])
     spent = int(state["ledger"]["estimated_tokens"]) + int(state["ledger"]["metered_tokens"])
-    limit = int(config["spending_limit_tokens"])
+    limit = _limit_of(config)
+    if limit is None:
+        state["loop"]["status"] = "stopped"
+        state["loop"]["reason"] = "spending limit is unreadable"
+        state["ledger"]["limit_tokens"] = 0
+        return None
     raw_cost = config["estimate_tokens_per_cycle"]
     cost = raw_cost if isinstance(raw_cost, int) and not isinstance(raw_cost, bool) and raw_cost > 0 else None
     state["ledger"]["limit_tokens"] = limit
@@ -418,7 +428,7 @@ def _commit_cycle(
     cycles = int(state["loop"]["cycles"])
     raw_cost = config["estimate_tokens_per_cycle"]
     cost = raw_cost if isinstance(raw_cost, int) and not isinstance(raw_cost, bool) and raw_cost > 0 else 0
-    limit = int(config["spending_limit_tokens"])
+    limit = _limit_of(config) or 0
     sandbox = outcome["sandbox"]
     planner = outcome.get("planner") if isinstance(outcome.get("planner"), dict) else None
     invoked = bool(sandbox.get("invoked"))
@@ -495,7 +505,7 @@ def _stamp_node(state: dict[str, Any], status: Any) -> None:
 
 def _persist(home: Path, config: dict[str, Any], peers: list[dict[str, Any]], sources: list[dict[str, str]], state: dict[str, Any]) -> dict[str, Any]:
     state["contributions_pushed"] = sum(1 for plan in state["plans"] if plan.get("pushed"))
-    state["ledger"]["limit_tokens"] = int(config["spending_limit_tokens"])
+    state["ledger"]["limit_tokens"] = _limit_of(config) or 0
     write_json(state_path(home), state)
     _write_publish(home, config, peers, sources, str(state.get("publish", {}).get("url", "")))
     return state

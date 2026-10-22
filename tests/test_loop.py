@@ -125,6 +125,29 @@ def test_kept_drafts_do_not_follow_a_symlink(tmp_path: Path) -> None:
     assert not (home / "drafts").exists() or not list((home / "drafts").rglob("issue-draft.md"))
 
 
+def test_unreadable_spending_limit_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    invoked = _connect(home, tmp_path, monkeypatch)
+    config = _ready(home)
+    config["subscription"] = "claude"
+    config["spending_limit_tokens"] = "lots"
+    config["estimate_tokens_per_cycle"] = 100
+    config["sandbox"]["execute"] = True
+    config["sandbox"]["runtime"] = "namespace"
+    save_config(home, config)
+    _local_source(home, tmp_path)
+    state = tick(home)
+    assert state["plans"] == []
+    assert state["loop"]["status"] == "stopped"
+    assert state["loop"]["reason"] == "spending limit is unreadable"
+    assert state["ledger"]["estimated_tokens"] == 0
+    assert not invoked.exists()
+    assert not (home / "workspaces").exists() or not any((home / "workspaces").iterdir())
+    again = tick(home)
+    assert again["plans"] == []
+    assert again["loop"]["reason"] == "spending limit is unreadable"
+
+
 def test_non_positive_estimate_does_not_start_a_cycle(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     invoked = _connect(home, tmp_path, monkeypatch)
