@@ -4,25 +4,28 @@ People who still have credits on Claude, Codex, or Cursor can point those subscr
 
 Discovery stays on your machine. There is no IdleHand catalog.
 
-IdleHand is a layer on Radicle. The node id is the Radicle node id when `rad self --nid` can report one. GitHub interop is optional, and init, connect, and the contribution loop do not need it. The GitHub repository that holds this code is not the forge IdleHand manages.
+IdleHand is a layer on Radicle. The node id is the Radicle node id when `rad self --nid` can report one. GitHub interop is optional, and init, configure, and the contribution loop do not need it. The GitHub repository that holds this code is not the forge IdleHand manages.
 
 ## Install
 
 ```bash
-python3 -m pip install -e .
+cargo install --path .
 ```
 
-Python 3.11 or newer is enough. The package has no runtime dependencies. If the `idlehand` script is not on your `PATH`, run `python3 -m idlehand` instead.
+Or build it in place with `cargo build --release` and run `target/release/idlehand`. The binary has no runtime dependencies beyond the system tools it calls (`git`, and optionally `rad`, `gh`, Docker, Podman, or bubblewrap).
 
 ## Basic path
 
 ```bash
 idlehand init
-idlehand connect claude
+idlehand configure
+idlehand start
 idlehand analytics
 ```
 
-`connect` accepts `claude`, `codex`, or `cursor`. It starts the node and leaves it running. As soon as that CLI is on `PATH`, the contribution loop starts under the default spending limit.
+`configure` is a section menu. It shows the current value of each setting. Press Enter, or type `skip`, to leave a value unchanged. `back` returns to the menu. `Done` saves what you changed and leaves the node stopped. Subscription is empty, `claude`, `codex`, or `cursor`. Type `none` to clear it. A bad answer is rejected and is not written.
+
+While the node is running, the same settings are on the loopback admin page, `http://127.0.0.1:47321/idlehand/admin` when publish is still on the default address. `idlehand status` prints that URL when the listener is on loopback. The public document at `/idlehand/publish` does not include the subscription, the spending limit, or the home path.
 
 ```bash
 idlehand status
@@ -49,13 +52,13 @@ Demo plans are labeled demo. A demo cycle can clone a repository and run the san
 | Estimate per cycle | 2,500 tokens |
 | Contribution rules | open: test, audit, issues, and pull requests |
 | Ownership gate | none |
-| Loop | starts when a subscription is connected |
+| Loop | starts after `idlehand start` when a subscription CLI is configured and on `PATH` |
 | Source list | `sources.toml` in the IdleHand home, two example repos you can replace |
 | Listen address | `127.0.0.1:47321`, path `/idlehand/publish` |
 | Peer heuristic | add a second-degree peer after 1 endorsement, at most 5 new peers per cycle, at most 50 peers |
 | Sandbox | Docker, then Podman, then the built-in namespace jail, then bubblewrap |
 
-The loop stops before another cycle would pass the spending limit. Raise the limit and the loop continues. The estimate is not reset when you connect.
+The loop stops before another cycle would pass the spending limit. Raise the limit and the loop continues. The estimate is not reset when you change the subscription.
 
 Rules can be turned off:
 
@@ -100,7 +103,7 @@ The node publishes its own peer list and repo list at `/idlehand/publish`. It fe
 
 Second-degree `file:` URLs are ignored. URLs with a username or password are rejected. Repo lists found on peers are counted and left out of `sources.toml`. The same analytics view shows why a second-degree peer was accepted or refused. The knobs are in `config.toml` under `peer_heuristic`. There is no plugin system.
 
-The listen port is bound to loopback until you change `publish.host`.
+The listen port is bound to loopback until you change `publish.host`. The admin page stays on that same listener, at `/idlehand/admin`, and it still refuses a client that is not loopback.
 
 ## Radicle
 
@@ -137,7 +140,7 @@ idlehand rad patch check rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21
 
 ## GitHub interop
 
-GitHub is optional. IdleHand uses the `gh` login already on the machine. It does not store a token, and it does not require `gh` for init, connect, or the contribution loop.
+GitHub is optional. IdleHand uses the `gh` login already on the machine. It does not store a token, and it does not require `gh` for init, configure, or the contribution loop.
 
 ```bash
 idlehand github status
@@ -175,7 +178,7 @@ Real:
 - a 10,000 token limit that stops the loop before the next cycle's estimate would pass it
 - Claude usage metered when that CLI reports it, otherwise a labeled local estimate
 - `idlehand analytics`
-- the loop starting after a subscription CLI is connected
+- the loop starting after you configure a subscription CLI and start the node
 - `idlehand:` links, including a direct fetch of a publisher list file
 - Linux protocol-handler registration
 - peer publish endpoint, direct fetch, and the peers-of-peers heuristic
@@ -193,6 +196,5 @@ Not done in this slice:
 ## Tests
 
 ```bash
-python3 -m pip install -e ".[dev]"
-python3 -m pytest
+cargo test
 ```
