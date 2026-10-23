@@ -11,7 +11,10 @@ use crate::home::{self, read_json, write_json, HomeLock};
 pub const MAX_DECISIONS: usize = 20;
 
 pub fn now_iso() -> String {
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     format_unix(seconds)
 }
 
@@ -47,15 +50,22 @@ pub fn public_subject(url: &str) -> String {
     if contains_control_break(url) {
         return "list entry".into();
     }
-    let text = scrub_secrets(url).replace(['\n', '\r'], " ").trim().to_string();
-    if text.is_empty() || text.contains("PRIVATE KEY") || text.len() > 500 || !text.contains("://") {
+    let text = scrub_secrets(url)
+        .replace(['\n', '\r'], " ")
+        .trim()
+        .to_string();
+    if text.is_empty() || text.contains("PRIVATE KEY") || text.len() > 500 || !text.contains("://")
+    {
         return "list entry".into();
     }
     text
 }
 
 pub fn public_reason(reason: &str) -> String {
-    let text = scrub_secrets(reason).replace(['\n', '\r'], " ").trim().to_string();
+    let text = scrub_secrets(reason)
+        .replace(['\n', '\r'], " ")
+        .trim()
+        .to_string();
     if text.is_empty() || text.contains("PRIVATE KEY") {
         return "refused".into();
     }
@@ -71,7 +81,10 @@ fn read_trust(home: &Path) -> (Vec<Value>, bool) {
         return (Vec::new(), true);
     }
     match read_json(&path) {
-        Ok(Some(Value::Array(items))) => (items.into_iter().filter(|item| item.is_object()).collect(), true),
+        Ok(Some(Value::Array(items))) => (
+            items.into_iter().filter(|item| item.is_object()).collect(),
+            true,
+        ),
         Ok(Some(_)) => (Vec::new(), false),
         Ok(None) => (Vec::new(), true),
         Err(_) => (Vec::new(), false),
@@ -110,7 +123,8 @@ fn extend(home: &Path, items: &[Value]) -> Result<(), String> {
         }
     }
     let start = current.len().saturating_sub(MAX_DECISIONS);
-    write_json(&trust_path(home), &Value::Array(current[start..].to_vec())).map_err(|e| e.to_string())
+    write_json(&trust_path(home), &Value::Array(current[start..].to_vec()))
+        .map_err(|e| e.to_string())
 }
 
 pub fn extend_trust(home: &Path, items: &[Value]) -> Result<(), String> {

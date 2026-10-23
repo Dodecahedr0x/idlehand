@@ -92,7 +92,12 @@ pub fn contribution_prompt(repo_url: &str, action: &str) -> String {
     )
 }
 
-pub fn subscription_command(subscription: &str, binary: &str, repo_url: &str, action: &str) -> Vec<String> {
+pub fn subscription_command(
+    subscription: &str,
+    binary: &str,
+    repo_url: &str,
+    action: &str,
+) -> Vec<String> {
     let prompt = contribution_prompt(repo_url, action);
     let names = binary_names(subscription);
     let executable = if !binary.is_empty() {

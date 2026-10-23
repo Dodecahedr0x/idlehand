@@ -6,11 +6,34 @@ The node id is the Radicle node id when `rad self --nid` prints one. GitHub is o
 
 ## Install
 
-```bash
-cargo install --path .
+Download an archive from [GitHub Releases](https://github.com/Dodecahedr0x/idlehand/releases). The archive name includes the target triple. `SHA256SUMS` in that release is the sha256 of each archive.
+
+```
+https://github.com/Dodecahedr0x/idlehand/releases/download/v<version>/idlehand-<version>-<target>.tar.gz
 ```
 
-Or build in place with `cargo build --release` and run `target/release/idlehand`. The binary calls `git`, and optionally `rad`, `gh`, Docker, Podman, or `bwrap`.
+Windows is `idlehand-<version>-x86_64-pc-windows-msvc.zip` and contains `idlehand.exe`. The other archives are `.tar.gz` and contain `idlehand`.
+
+The targets are `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc`.
+
+Version 0.1.0 on Apple Silicon is `https://github.com/Dodecahedr0x/idlehand/releases/download/v0.1.0/idlehand-0.1.0-aarch64-apple-darwin.tar.gz`.
+
+The binary calls `git`, and optionally `rad`, `gh`, Docker, Podman, or `bwrap`.
+
+From a checkout, `cargo build --release` writes `target/release/idlehand`.
+
+## Release
+
+`version` in `Cargo.toml` is the only version. The next patch after 0.1.0 is `version = "0.1.1"`. Commit that, then tag and push the tag:
+
+```bash
+git add Cargo.toml
+git commit -m "Set the version to 0.1.1."
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The tagged commit has to contain `.github/workflows/release.yml`. The tag has to be `v` plus the `Cargo.toml` version. `v0.1.1` is published only when `version = "0.1.1"`. The workflow builds the five targets and attaches the archives to that release.
 
 ## Home
 
@@ -31,7 +54,7 @@ idlehand stop
 
 ## Configure
 
-`idlehand configure` is a section menu: Subscription, Spending, Rules, Sandbox, Publish, Peers, and Done. Enter, `done`, or `7` leaves the menu and writes whatever you changed. `skip` or Enter on a field keeps the shown value. `back` returns to the menu. `none` clears the subscription, or a host list. A bad answer is rejected and is not written. Done leaves the node stopped.
+`idlehand configure` is a full-screen section menu: Subscription, Spending, Rules, Sandbox, Publish, Peers, and Done. Arrows or j/k move, enter chooses, esc leaves a section, s skips a setting and keeps its value, and q or Done finishes. `none` clears the subscription or a host list. A bad value is rejected and is not written. Done saves only changed settings and leaves the node stopped.
 
 Subscription is empty, `claude`, `codex`, or `cursor`.
 

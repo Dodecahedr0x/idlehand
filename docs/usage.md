@@ -8,20 +8,13 @@ The home holds `config.toml`, `sources.toml`, `peers.toml`, `delegated.toml`, `s
 
 ## Configure
 
-```text
-Select a section [Done]:
-  1. Subscription (subscription)
-  2. Spending (spending)
-  3. Rules (rules)
-  4. Sandbox (sandbox)
-  5. Publish (publish)
-  6. Peers (peers)
-  7. Done
-```
+`idlehand configure` is a full-screen menu. It needs a terminal. Without one it prints `configure needs a terminal` and exits 1, and it does not create a home.
 
-Type a number, the section key, or the label. Each field prints its current value. Enter or `skip` keeps it. `back` returns to the menu. Enter, `done`, or `7` on the menu saves changed fields and exits. Nothing is written until then, and the node is not started.
+The sections are Subscription, Spending, Rules, Sandbox, Publish, Peers, and Done. Arrows or j/k move. Enter opens a section or edits a setting. Esc leaves a section, or cancels an edit. `s` skips a setting and keeps its value. `q` or Done finishes.
 
-`none` clears `subscription`, `peer_heuristic.allowed_hosts`, and `peer_heuristic.blocked_hosts`. Subscription names are `claude`, `codex`, and `cursor`. Booleans accept `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`. A rejected value stays on that prompt and is not stored.
+On an edit, type a value and press Enter. An empty edit, or the word `skip`, keeps the stored value. A rejected value stays on that field and is not stored. Nothing is written until Done, and only changed settings are written. Done does not start the node.
+
+`none` clears `subscription`, `peer_heuristic.allowed_hosts`, and `peer_heuristic.blocked_hosts`. Subscription names are `claude`, `codex`, and `cursor`. Booleans accept `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
 
 Fields:
 

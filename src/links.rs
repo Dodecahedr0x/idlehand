@@ -48,16 +48,23 @@ pub fn parse_idlehand_link(url: &str) -> Result<ParsedLink, LinkError> {
         Some((left, query)) => (left, query),
         None => (rest, ""),
     };
-    let authority = before_query.trim_start_matches("//").trim_start_matches('/');
+    let authority = before_query
+        .trim_start_matches("//")
+        .trim_start_matches('/');
     let action = authority.split('/').next().unwrap_or("").to_string();
     let pairs = parse_qs(query);
     for blocked in CATALOG_PARAMS {
         if pairs.iter().any(|(key, _)| key == blocked) {
-            return Err(LinkError("IdleHand does not resolve links through a catalog".into()));
+            return Err(LinkError(
+                "IdleHand does not resolve links through a catalog".into(),
+            ));
         }
     }
     if !action.is_empty() && action != "add" {
-        return Err(LinkError(format!("unsupported IdleHand link action{}", action_label(&action))));
+        return Err(LinkError(format!(
+            "unsupported IdleHand link action{}",
+            action_label(&action)
+        )));
     }
     let mut repos = Vec::new();
     for (key, value) in &pairs {
@@ -65,11 +72,20 @@ pub fn parse_idlehand_link(url: &str) -> Result<ParsedLink, LinkError> {
             repos.extend(split_repo_field(value));
         }
     }
-    let lists: Vec<&str> = pairs.iter().filter(|(key, _)| key == "list").map(|(_, value)| value.as_str()).collect();
+    let lists: Vec<&str> = pairs
+        .iter()
+        .filter(|(key, _)| key == "list")
+        .map(|(_, value)| value.as_str())
+        .collect();
     if lists.len() > 1 {
-        return Err(LinkError("an IdleHand link can name only one list file".into()));
+        return Err(LinkError(
+            "an IdleHand link can name only one list file".into(),
+        ));
     }
-    let list_url = lists.first().map(|s| s.trim().to_string()).unwrap_or_default();
+    let list_url = lists
+        .first()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     if !list_url.is_empty() {
         validate_list_url(&list_url)?;
     }
@@ -100,14 +116,21 @@ fn percent_decode(text: &str) -> String {
 }
 
 fn split_repo_field(value: &str) -> Vec<String> {
-    value.split(',').map(str::trim).filter(|part| !part.is_empty()).map(str::to_string).collect()
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn action_label(action: &str) -> String {
     if !action.is_empty()
         && action.len() <= 32
         && action.chars().next().unwrap().is_ascii_alphabetic()
-        && action.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+        && action
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
     {
         format!(": {action}")
     } else {
@@ -117,7 +140,14 @@ fn action_label(action: &str) -> String {
 
 fn shown_url(url: &str) -> String {
     let shown = public_url(url);
-    if shown.is_empty() || shown.contains("PRIVATE KEY") || shown.chars().any(|c| c == '\r' || c == '\n' || c == '\t' || c == ' ') || shown.len() > 200 || !shown.contains("://") {
+    if shown.is_empty()
+        || shown.contains("PRIVATE KEY")
+        || shown
+            .chars()
+            .any(|c| c == '\r' || c == '\n' || c == '\t' || c == ' ')
+        || shown.len() > 200
+        || !shown.contains("://")
+    {
         String::new()
     } else {
         shown
@@ -143,7 +173,10 @@ fn validate_repo_url(url: &str) -> Result<String, LinkError> {
     }
     let parsed = split_simple(cleaned);
     if !matches!(parsed.0.as_str(), "https" | "http") || parsed.1.is_empty() {
-        return Err(LinkError(with_url("repository URL must be http or https", cleaned)));
+        return Err(LinkError(with_url(
+            "repository URL must be http or https",
+            cleaned,
+        )));
     }
     if parsed.2.is_empty() || parsed.2 == "/" {
         return Err(LinkError(with_url("repository URL needs a path", cleaned)));
@@ -169,7 +202,10 @@ fn validate_list_url(url: &str) -> Result<(), LinkError> {
 }
 
 fn split_simple(url: &str) -> (String, String, String) {
-    let (scheme, rest) = url.split_once(':').map(|(s, r)| (s.to_ascii_lowercase(), r.to_string())).unwrap_or_else(|| (String::new(), url.to_string()));
+    let (scheme, rest) = url
+        .split_once(':')
+        .map(|(s, r)| (s.to_ascii_lowercase(), r.to_string()))
+        .unwrap_or_else(|| (String::new(), url.to_string()));
     let rest = rest.trim_start_matches("//");
     if scheme == "file" {
         return (scheme, String::new(), rest.to_string());
@@ -179,7 +215,11 @@ fn split_simple(url: &str) -> (String, String, String) {
         None => (rest.to_string(), String::new()),
     };
     let host = host.split('@').next_back().unwrap_or("").to_string();
-    (scheme, host, path.split(['?', '#']).next().unwrap_or("").to_string())
+    (
+        scheme,
+        host,
+        path.split(['?', '#']).next().unwrap_or("").to_string(),
+    )
 }
 
 pub fn judge_repo_url(url: &str) -> (bool, String, String) {
@@ -198,16 +238,21 @@ pub fn judge_list_text(text: &str) -> Result<Vec<(bool, String, String)>, LinkEr
         return Ok(Vec::new());
     }
     if stripped.starts_with('{') || stripped.starts_with('[') {
-        let payload: Value = serde_json::from_str(stripped).map_err(|err| LinkError(format!("list file is not valid JSON: {err}")))?;
+        let payload: Value = serde_json::from_str(stripped)
+            .map_err(|err| LinkError(format!("list file is not valid JSON: {err}")))?;
         let values = if let Some(object) = payload.as_object() {
             object.get("repos").cloned().unwrap_or(Value::Null)
         } else if payload.is_array() {
             payload
         } else {
-            return Err(LinkError("list file JSON must be a list or an object with repos".into()));
+            return Err(LinkError(
+                "list file JSON must be a list or an object with repos".into(),
+            ));
         };
         let Some(values) = values.as_array() else {
-            return Err(LinkError("list file JSON must be a list or an object with repos".into()));
+            return Err(LinkError(
+                "list file JSON must be a list or an object with repos".into(),
+            ));
         };
         let mut judged = Vec::new();
         for item in values {
@@ -216,7 +261,11 @@ pub fn judge_list_text(text: &str) -> Result<Vec<(bool, String, String)>, LinkEr
             } else if let Some(url) = item.get("url").and_then(Value::as_str) {
                 judged.push(judge_repo_url(url));
             } else {
-                judged.push((false, String::new(), "each repo in the list file needs a URL".into()));
+                judged.push((
+                    false,
+                    String::new(),
+                    "each repo in the list file needs a URL".into(),
+                ));
             }
         }
         return Ok(judged);
@@ -237,7 +286,10 @@ pub fn fetch_text(url: &str, timeout: Duration) -> Result<String, LinkError> {
     if parsed.0 == "file" {
         let path = file_path(url);
         if !path.is_file() {
-            return Err(LinkError(format!("list file not found: {}", path.display())));
+            return Err(LinkError(format!(
+                "list file not found: {}",
+                path.display()
+            )));
         }
         let data = fs::read(&path).map_err(|err| LinkError(err.to_string()))?;
         if data.len() > MAX_LIST_BYTES {
@@ -267,29 +319,56 @@ fn decode_text(data: &[u8]) -> Result<String, LinkError> {
 
 fn fetch_http(url: &str, timeout: Duration) -> Result<String, LinkError> {
     let (host, port, path) = http_parts(url)?;
-    let mut stream = TcpStream::connect_timeout(&format!("{host}:{port}").parse().map_err(|_| LinkError(format!("could not fetch {}: bad address", public_url(url))))?, timeout)
-        .map_err(|err| LinkError(format!("could not fetch {}: {err}", public_or_list(url))))?;
+    let mut stream = TcpStream::connect_timeout(
+        &format!("{host}:{port}")
+            .parse()
+            .map_err(|_| LinkError(format!("could not fetch {}: bad address", public_url(url))))?,
+        timeout,
+    )
+    .map_err(|err| LinkError(format!("could not fetch {}: {err}", public_or_list(url))))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
     let request = format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUser-Agent: idlehand/{VERSION}\r\nConnection: close\r\nAccept: */*\r\n\r\n");
-    stream.write_all(request.as_bytes()).map_err(|err| LinkError(format!("could not fetch {}: {err}", public_or_list(url))))?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| LinkError(format!("could not fetch {}: {err}", public_or_list(url))))?;
     let mut data = Vec::new();
     let mut buf = [0u8; 8192];
     while data.len() <= MAX_LIST_BYTES + 1 {
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => data.extend_from_slice(&buf[..n]),
-            Err(err) => return Err(LinkError(format!("could not fetch {}: {err}", public_or_list(url)))),
+            Err(err) => {
+                return Err(LinkError(format!(
+                    "could not fetch {}: {err}",
+                    public_or_list(url)
+                )))
+            }
         }
     }
     let text = String::from_utf8_lossy(&data);
-    let (head, body) = text.split_once("\r\n\r\n").ok_or_else(|| LinkError(format!("could not fetch {}: short response", public_or_list(url))))?;
-    let status: u16 = head.lines().next().and_then(|line| line.split_whitespace().nth(1)).and_then(|code| code.parse().ok()).unwrap_or(0);
+    let (head, body) = text.split_once("\r\n\r\n").ok_or_else(|| {
+        LinkError(format!(
+            "could not fetch {}: short response",
+            public_or_list(url)
+        ))
+    })?;
+    let status: u16 = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
     if (300..400).contains(&status) {
-        return Err(LinkError(format!("refusing to follow a redirect from {url}")));
+        return Err(LinkError(format!(
+            "refusing to follow a redirect from {url}"
+        )));
     }
     if !(200..300).contains(&status) {
-        return Err(LinkError(format!("could not fetch {}: HTTP {status}", public_or_list(url))));
+        return Err(LinkError(format!(
+            "could not fetch {}: HTTP {status}",
+            public_or_list(url)
+        )));
     }
     let body = body.as_bytes();
     if body.len() > MAX_LIST_BYTES {
@@ -299,28 +378,49 @@ fn fetch_http(url: &str, timeout: Duration) -> Result<String, LinkError> {
 }
 
 fn fetch_https(url: &str, timeout: Duration) -> Result<String, LinkError> {
-    let agent = ureq::AgentBuilder::new().timeout(timeout).redirects(0).build();
-    let response = agent.get(url).set("User-Agent", &format!("idlehand/{VERSION}")).call();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .redirects(0)
+        .build();
+    let response = agent
+        .get(url)
+        .set("User-Agent", &format!("idlehand/{VERSION}"))
+        .call();
     match response {
         Ok(response) => {
             if (300..400).contains(&response.status()) {
-                return Err(LinkError(format!("refusing to follow a redirect from {url}")));
+                return Err(LinkError(format!(
+                    "refusing to follow a redirect from {url}"
+                )));
             }
             let mut buf = Vec::new();
-            response.into_reader().take(MAX_LIST_BYTES as u64 + 1).read_to_end(&mut buf).map_err(|err| LinkError(err.to_string()))?;
+            response
+                .into_reader()
+                .take(MAX_LIST_BYTES as u64 + 1)
+                .read_to_end(&mut buf)
+                .map_err(|err| LinkError(err.to_string()))?;
             if buf.len() > MAX_LIST_BYTES {
                 return Err(LinkError("list file is larger than 1MB".into()));
             }
             decode_text(&buf)
         }
-        Err(ureq::Error::Status(code, _)) if (300..400).contains(&code) => Err(LinkError(format!("refusing to follow a redirect from {url}"))),
-        Err(err) => Err(LinkError(format!("could not fetch {}: {err}", public_or_list(url)))),
+        Err(ureq::Error::Status(code, _)) if (300..400).contains(&code) => Err(LinkError(format!(
+            "refusing to follow a redirect from {url}"
+        ))),
+        Err(err) => Err(LinkError(format!(
+            "could not fetch {}: {err}",
+            public_or_list(url)
+        ))),
     }
 }
 
 fn public_or_list(url: &str) -> String {
     let shown = public_url(url);
-    if shown.is_empty() { "list file".into() } else { shown }
+    if shown.is_empty() {
+        "list file".into()
+    } else {
+        shown
+    }
 }
 
 fn http_parts(url: &str) -> Result<(String, u16, String), LinkError> {
@@ -332,7 +432,10 @@ fn http_parts(url: &str) -> Result<(String, u16, String), LinkError> {
     let authority = authority.split('@').next_back().unwrap_or("").to_string();
     let (host, port) = if let Some(host) = authority.strip_prefix('[') {
         let (host, rest) = host.split_once(']').unwrap_or((host, ""));
-        let port = rest.strip_prefix(':').and_then(|p| p.parse().ok()).unwrap_or(80);
+        let port = rest
+            .strip_prefix(':')
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(80);
         (host.to_string(), port)
     } else if let Some((host, port)) = authority.rsplit_once(':') {
         (host.to_string(), port.parse().unwrap_or(80))
@@ -355,7 +458,10 @@ fn normalize_repo(url: &str) -> String {
 pub fn add_repos(home: &Path, urls: &[String]) -> Result<Vec<String>, LinkError> {
     let _lock = HomeLock::acquire(home).map_err(|err| LinkError(err.to_string()))?;
     let mut current = load_sources(home).map_err(|err| LinkError(err.to_string()))?;
-    let mut known: Vec<String> = current.iter().map(|repo| normalize_repo(&repo.url)).collect();
+    let mut known: Vec<String> = current
+        .iter()
+        .map(|repo| normalize_repo(&repo.url))
+        .collect();
     let mut added = Vec::new();
     for url in urls {
         let validated = validate_repo_url(url)?;
@@ -363,7 +469,10 @@ pub fn add_repos(home: &Path, urls: &[String]) -> Result<Vec<String>, LinkError>
         if known.iter().any(|item| item == &key) {
             continue;
         }
-        current.push(Source { url: validated.clone(), note: "Added from an IdleHand link.".into() });
+        current.push(Source {
+            url: validated.clone(),
+            note: "Added from an IdleHand link.".into(),
+        });
         known.push(key);
         added.push(validated);
     }
@@ -380,16 +489,31 @@ pub fn apply_link(home: &Path, url: &str) -> Result<LinkApply, LinkError> {
             return Err(err);
         }
     };
-    let mut judged: Vec<(bool, String, String)> = parsed.repos.iter().map(|repo| judge_repo_url(repo)).collect();
+    let mut judged: Vec<(bool, String, String)> = parsed
+        .repos
+        .iter()
+        .map(|repo| judge_repo_url(repo))
+        .collect();
     let mut decisions = Vec::new();
     if !parsed.list_url.is_empty() {
-        match fetch_text(&parsed.list_url, Duration::from_secs(10)).and_then(|text| judge_list_text(&text)) {
+        match fetch_text(&parsed.list_url, Duration::from_secs(10))
+            .and_then(|text| judge_list_text(&text))
+        {
             Err(err) => decisions.push(decision("link", &parsed.list_url, false, &err.0)),
-            Ok(listed) if listed.is_empty() => decisions.push(decision("link", &parsed.list_url, false, "the list file has no repositories")),
+            Ok(listed) if listed.is_empty() => decisions.push(decision(
+                "link",
+                &parsed.list_url,
+                false,
+                "the list file has no repositories",
+            )),
             Ok(listed) => judged.extend(listed),
         }
     }
-    let mut known: Vec<String> = load_sources(home).unwrap_or_default().iter().map(|repo| normalize_repo(&repo.url)).collect();
+    let mut known: Vec<String> = load_sources(home)
+        .unwrap_or_default()
+        .iter()
+        .map(|repo| normalize_repo(&repo.url))
+        .collect();
     let mut fresh = Vec::new();
     for (accepted, cleaned, reason) in judged {
         if !accepted {
@@ -398,17 +522,33 @@ pub fn apply_link(home: &Path, url: &str) -> Result<LinkApply, LinkError> {
         }
         let key = normalize_repo(&cleaned);
         if known.iter().any(|item| item == &key) {
-            decisions.push(decision("link", &cleaned, true, "already in the local source list"));
+            decisions.push(decision(
+                "link",
+                &cleaned,
+                true,
+                "already in the local source list",
+            ));
             continue;
         }
         decisions.push(decision("link", &cleaned, true, &reason));
         fresh.push(cleaned);
         known.push(key);
     }
-    let added = if fresh.is_empty() { Vec::new() } else { add_repos(home, &fresh)? };
+    let added = if fresh.is_empty() {
+        Vec::new()
+    } else {
+        add_repos(home, &fresh)?
+    };
     let _ = remember(home, &decisions);
-    if !decisions.iter().any(|item| item.get("accepted").and_then(Value::as_bool) == Some(true)) {
-        let reason = decisions.last().and_then(|item| item.get("reason")).and_then(Value::as_str).unwrap_or("the link added no repositories");
+    if !decisions
+        .iter()
+        .any(|item| item.get("accepted").and_then(Value::as_bool) == Some(true))
+    {
+        let reason = decisions
+            .last()
+            .and_then(|item| item.get("reason"))
+            .and_then(Value::as_str)
+            .unwrap_or("the link added no repositories");
         return Err(LinkError(reason.to_string()));
     }
     Ok(LinkApply { added, decisions })

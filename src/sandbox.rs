@@ -73,7 +73,11 @@ pub fn sandbox_limits(image: &str, memory: &str, cpus: &str) -> Option<(String, 
 }
 
 pub fn detect_runtime(configured: &str) -> Option<String> {
-    let choice = if configured.is_empty() { "auto" } else { configured };
+    let choice = if configured.is_empty() {
+        "auto"
+    } else {
+        configured
+    };
     if choice == "none" {
         return None;
     }
@@ -111,30 +115,46 @@ pub fn prepare_host_command(argv: &[String], workspace: &Path) -> Result<Vec<Str
     if argv.is_empty() {
         return Err("empty command".into());
     }
-    let workspace = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
     let mut raw = argv[0].clone();
     if !raw.starts_with('/') {
         let in_workspace = workspace.join(&raw);
         if in_workspace.exists() {
             let resolved = in_workspace.canonicalize().map_err(|e| e.to_string())?;
-            let relative = resolved.strip_prefix(&workspace).map_err(|_| "refusing to run outside the sandbox".to_string())?;
-            let mut mapped = vec![Path::new("/work").join(relative).to_string_lossy().to_string()];
+            let relative = resolved
+                .strip_prefix(&workspace)
+                .map_err(|_| "refusing to run outside the sandbox".to_string())?;
+            let mut mapped = vec![Path::new("/work")
+                .join(relative)
+                .to_string_lossy()
+                .to_string()];
             mapped.extend(argv[1..].iter().cloned());
             return Ok(mapped);
         }
-        raw = which(&raw).map(|p| p.to_string_lossy().to_string()).ok_or_else(|| format!("{raw} was not found on PATH"))?;
+        raw = which(&raw)
+            .map(|p| p.to_string_lossy().to_string())
+            .ok_or_else(|| format!("{raw} was not found on PATH"))?;
     }
     let path = PathBuf::from(&raw);
     if path.exists() {
         if let Ok(resolved) = path.canonicalize() {
             if let Ok(relative) = resolved.strip_prefix(&workspace) {
-                let mut mapped = vec![Path::new("/work").join(relative).to_string_lossy().to_string()];
+                let mut mapped = vec![Path::new("/work")
+                    .join(relative)
+                    .to_string_lossy()
+                    .to_string()];
                 mapped.extend(argv[1..].iter().cloned());
                 return Ok(mapped);
             }
         }
     }
-    if raw.starts_with("/usr/") || raw.starts_with("/bin/") || raw.starts_with("/lib/") || raw.starts_with("/lib64/") {
+    if raw.starts_with("/usr/")
+        || raw.starts_with("/bin/")
+        || raw.starts_with("/lib/")
+        || raw.starts_with("/lib64/")
+    {
         let mut mapped = vec![raw];
         mapped.extend(argv[1..].iter().cloned());
         return Ok(mapped);
@@ -144,7 +164,10 @@ pub fn prepare_host_command(argv: &[String], workspace: &Path) -> Result<Vec<Str
 
 fn clean_env() -> std::collections::HashMap<String, String> {
     [
-        ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+        (
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ),
         ("HOME", "/tmp"),
         ("TMPDIR", "/tmp"),
         ("LANG", "C"),
@@ -154,8 +177,17 @@ fn clean_env() -> std::collections::HashMap<String, String> {
     .collect()
 }
 
-pub fn build_container_argv(runtime: &str, workspace: &Path, command: &[String], image: &str, memory: &str, cpus: &str) -> Vec<String> {
-    let workspace = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+pub fn build_container_argv(
+    runtime: &str,
+    workspace: &Path,
+    command: &[String],
+    image: &str,
+    memory: &str,
+    cpus: &str,
+) -> Vec<String> {
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
     let mut argv = vec![
         runtime.to_string(),
         "run".into(),
@@ -194,7 +226,9 @@ pub fn build_container_argv(runtime: &str, workspace: &Path, command: &[String],
 }
 
 pub fn build_bwrap_argv(workspace: &Path, command: &[String]) -> Vec<String> {
-    let workspace = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
     let mut argv = vec![
         "bwrap".into(),
         "--unshare-all".into(),
@@ -225,9 +259,17 @@ pub fn build_bwrap_argv(workspace: &Path, command: &[String]) -> Vec<String> {
     ];
     for name in ["bin", "lib", "lib64"] {
         let host = Path::new("/").join(name);
-        if host.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        if host
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
             if let Ok(link) = fs::read_link(&host) {
-                argv.extend(["--symlink".into(), link.display().to_string(), format!("/{name}")]);
+                argv.extend([
+                    "--symlink".into(),
+                    link.display().to_string(),
+                    format!("/{name}"),
+                ]);
             }
         }
     }
@@ -238,7 +280,11 @@ pub fn build_bwrap_argv(workspace: &Path, command: &[String]) -> Vec<String> {
 
 fn refused(runtime: &str, reason: &str, argv: &[String]) -> SandboxResult {
     SandboxResult {
-        runtime: if runtime.is_empty() { "none".into() } else { runtime.into() },
+        runtime: if runtime.is_empty() {
+            "none".into()
+        } else {
+            runtime.into()
+        },
         invoked: false,
         ok: false,
         exit_code: None,
@@ -258,7 +304,13 @@ fn from_process(runtime: &str, argv: &[String], completed: &ProcOut) -> SandboxR
     } else {
         format!("sandbox exited {}", completed.code)
     };
-    let reason = reason_source.lines().next().unwrap_or("").chars().take(300).collect();
+    let reason = reason_source
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(300)
+        .collect();
     SandboxResult {
         runtime: runtime.into(),
         invoked: true,
@@ -273,14 +325,28 @@ fn from_process(runtime: &str, argv: &[String], completed: &ProcOut) -> SandboxR
 
 pub fn run_namespace(workspace: &Path, command: &[String], timeout: Duration) -> SandboxResult {
     if crate::home::is_symlink(workspace) {
-        return refused("namespace", "refusing to follow a workspace symlink", command);
+        return refused(
+            "namespace",
+            "refusing to follow a workspace symlink",
+            command,
+        );
     }
     let mapped = match prepare_host_command(command, workspace) {
         Ok(mapped) => mapped,
         Err(err) => return refused("namespace", &err, command),
     };
     let exe = procutil::current_executable();
-    let mut argv = vec![exe.to_string_lossy().to_string(), "jail".into(), "--workspace".into(), workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf()).display().to_string(), "--".into()];
+    let mut argv = vec![
+        exe.to_string_lossy().to_string(),
+        "jail".into(),
+        "--workspace".into(),
+        workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf())
+            .display()
+            .to_string(),
+        "--".into(),
+    ];
     argv.extend(mapped.iter().cloned());
     let completed = procutil::run_group(&argv, None, Some(clean_env()), timeout);
     let mut result = from_process("namespace", &mapped, &completed);
@@ -289,7 +355,15 @@ pub fn run_namespace(workspace: &Path, command: &[String], timeout: Duration) ->
         let detail = if completed.stderr.trim().is_empty() {
             "sandbox setup failed".to_string()
         } else {
-            completed.stderr.trim().lines().last().unwrap_or("sandbox setup failed").chars().take(300).collect()
+            completed
+                .stderr
+                .trim()
+                .lines()
+                .last()
+                .unwrap_or("sandbox setup failed")
+                .chars()
+                .take(300)
+                .collect()
         };
         result.reason = detail;
     }
@@ -325,16 +399,33 @@ pub fn run_external(runtime: &str, argv: &[String], timeout: Duration) -> Sandbo
     from_process(runtime, argv, &completed)
 }
 
-pub fn run(workspace: &Path, command: &[String], runtime: &str, image: &str, memory: &str, cpus: &str, timeout: Duration) -> SandboxResult {
+pub fn run(
+    workspace: &Path,
+    command: &[String],
+    runtime: &str,
+    image: &str,
+    memory: &str,
+    cpus: &str,
+    timeout: Duration,
+) -> SandboxResult {
     let chosen = detect_runtime(runtime);
     let Some(chosen) = chosen else {
-        let label = if KNOWN.contains(&runtime) { runtime } else { "none" };
-        return refused(label, "no sandbox runtime is available; refused to run on the host", command);
+        let label = if KNOWN.contains(&runtime) {
+            runtime
+        } else {
+            "none"
+        };
+        return refused(
+            label,
+            "no sandbox runtime is available; refused to run on the host",
+            command,
+        );
     };
     let Some((image, memory, cpus)) = sandbox_limits(image, memory, cpus) else {
         return refused(&chosen, "sandbox limit is unreadable", command);
     };
-    if crate::home::is_symlink(workspace) || workspace.parent().is_some_and(crate::home::is_symlink) {
+    if crate::home::is_symlink(workspace) || workspace.parent().is_some_and(crate::home::is_symlink)
+    {
         return refused(runtime, "refusing to follow a workspace symlink", command);
     }
     if let Err(err) = fs::create_dir_all(workspace) {
@@ -344,7 +435,10 @@ pub fn run(workspace: &Path, command: &[String], runtime: &str, image: &str, mem
         return run_namespace(workspace, command, timeout);
     }
     if chosen == "docker" || chosen == "podman" {
-        let _ = fs::set_permissions(workspace, fs::Permissions::from(std::os::unix::fs::PermissionsExt::from_mode(0o777)));
+        let _ = fs::set_permissions(
+            workspace,
+            fs::Permissions::from(std::os::unix::fs::PermissionsExt::from_mode(0o777)),
+        );
         let argv = build_container_argv(&chosen, workspace, command, &image, &memory, &cpus);
         return run_external(&chosen, &argv, timeout);
     }

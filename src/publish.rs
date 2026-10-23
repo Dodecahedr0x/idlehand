@@ -47,13 +47,24 @@ pub fn start_publish_server(home: &Path, host: &str, port: u16) -> Option<Publis
     let home = home.to_path_buf();
     let token = admin_token();
     let join = thread::spawn(move || serve_loop(listener, home, token, flag));
-    Some(PublishServer { shutdown, address, join: Some(join) })
+    Some(PublishServer {
+        shutdown,
+        address,
+        join: Some(join),
+    })
 }
 
 fn admin_token() -> String {
     let mut bytes = [0u8; 16];
-    if std::fs::File::open("/dev/urandom").and_then(|mut file| std::io::Read::read_exact(&mut file, &mut bytes)).is_err() {
-        bytes = std::process::id().to_le_bytes().repeat(4).try_into().unwrap_or([1; 16]);
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| std::io::Read::read_exact(&mut file, &mut bytes))
+        .is_err()
+    {
+        bytes = std::process::id()
+            .to_le_bytes()
+            .repeat(4)
+            .try_into()
+            .unwrap_or([1; 16]);
     }
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -61,7 +72,9 @@ fn admin_token() -> String {
 fn serve_loop(listener: TcpListener, home: PathBuf, token: String, shutdown: Arc<AtomicBool>) {
     listener.set_nonblocking(false).ok();
     while !shutdown.load(Ordering::SeqCst) {
-        let Ok((mut stream, peer)) = listener.accept() else { break };
+        let Ok((mut stream, peer)) = listener.accept() else {
+            break;
+        };
         if shutdown.load(Ordering::SeqCst) {
             break;
         }
@@ -79,9 +92,13 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, String, Vec<
     let mut tmp = [0u8; 2048];
     loop {
         let n = stream.read(&mut tmp)?;
-        if n == 0 { break }
+        if n == 0 {
+            break;
+        }
         buf.extend_from_slice(&tmp[..n]);
-        if buf.windows(4).any(|window| window == b"\r\n\r\n") || buf.len() > 1_000_000 { break }
+        if buf.windows(4).any(|window| window == b"\r\n\r\n") || buf.len() > 1_000_000 {
+            break;
+        }
     }
     let text = String::from_utf8_lossy(&buf);
     let Some((head, rest)) = text.split_once("\r\n\r\n") else {
@@ -91,31 +108,58 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, String, Vec<
     let request = lines.next().unwrap_or("");
     let mut parts = request.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
-    let path = parts.next().unwrap_or("").split('?').next().unwrap_or("").to_string();
-    let length = lines.find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
-    }).unwrap_or(0);
+    let path = parts
+        .next()
+        .unwrap_or("")
+        .split('?')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let length = lines
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
     let mut body = rest.as_bytes().to_vec();
     while body.len() < length && body.len() < 1_000_000 {
         let n = stream.read(&mut tmp)?;
-        if n == 0 { break }
+        if n == 0 {
+            break;
+        }
         body.extend_from_slice(&tmp[..n]);
     }
     body.truncate(length);
     Ok((method, path, body))
 }
 
-fn route(home: &Path, token: &str, peer: SocketAddr, method: &str, path: &str, body: &[u8]) -> Vec<u8> {
+fn route(
+    home: &Path,
+    token: &str,
+    peer: SocketAddr,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> Vec<u8> {
     if path == "/idlehand/publish" && method == "GET" {
         return publish_body(home);
     }
     if path == "/idlehand/admin" {
         if !client_may_admin(peer) {
-            return http(403, "text/plain; charset=utf-8", b"admin is loopback only\n");
+            return http(
+                403,
+                "text/plain; charset=utf-8",
+                b"admin is loopback only\n",
+            );
         }
         if method == "GET" {
-            return http(200, "text/html; charset=utf-8", &admin_page(home, token, None));
+            return http(
+                200,
+                "text/html; charset=utf-8",
+                &admin_page(home, token, None),
+            );
         }
         if method == "POST" {
             return admin_post(home, token, body);
@@ -137,26 +181,67 @@ fn publish_body(home: &Path) -> Vec<u8> {
 
 fn admin_post(home: &Path, token: &str, body: &[u8]) -> Vec<u8> {
     let fields = form_pairs(&String::from_utf8_lossy(body));
-    if fields.iter().find(|(key, _)| key == "csrf").map(|(_, value)| value.as_str()) != Some(token) {
-        return http(403, "text/html; charset=utf-8", &admin_page(home, token, Some("the form token did not match")));
+    if fields
+        .iter()
+        .find(|(key, _)| key == "csrf")
+        .map(|(_, value)| value.as_str())
+        != Some(token)
+    {
+        return http(
+            403,
+            "text/html; charset=utf-8",
+            &admin_page(home, token, Some("the form token did not match")),
+        );
     }
     let Ok(current) = load_config(home) else {
-        return http(400, "text/html; charset=utf-8", &admin_page(home, token, Some("config is unreadable")));
+        return http(
+            400,
+            "text/html; charset=utf-8",
+            &admin_page(home, token, Some("config is unreadable")),
+        );
     };
-    let updates: Vec<(&str, &str)> = setting_keys().iter().map(|key| (*key, fields.iter().find(|(name, _)| name == key).map(|(_, value)| value.as_str()).unwrap_or(""))).collect();
+    let updates: Vec<(&str, &str)> = setting_keys()
+        .iter()
+        .map(|key| {
+            (
+                *key,
+                fields
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, value)| value.as_str())
+                    .unwrap_or(""),
+            )
+        })
+        .collect();
     match configure::apply_updates(&current, &updates) {
         Ok(next) => {
             if next.to_string() != current.to_string() {
                 let Ok(_lock) = HomeLock::acquire(home) else {
-                    return http(400, "text/html; charset=utf-8", &admin_page(home, token, Some("config is unreadable")));
+                    return http(
+                        400,
+                        "text/html; charset=utf-8",
+                        &admin_page(home, token, Some("config is unreadable")),
+                    );
                 };
                 if save_config(home, &next).is_err() {
-                    return http(400, "text/html; charset=utf-8", &admin_page(home, token, Some("config is unreadable")));
+                    return http(
+                        400,
+                        "text/html; charset=utf-8",
+                        &admin_page(home, token, Some("config is unreadable")),
+                    );
                 }
             }
-            http(200, "text/html; charset=utf-8", &admin_page(home, token, Some("saved")))
+            http(
+                200,
+                "text/html; charset=utf-8",
+                &admin_page(home, token, Some("saved")),
+            )
         }
-        Err(err) => http(400, "text/html; charset=utf-8", &admin_page(home, token, Some(&format!("rejected: {err}")))),
+        Err(err) => http(
+            400,
+            "text/html; charset=utf-8",
+            &admin_page(home, token, Some(&format!("rejected: {err}"))),
+        ),
     }
 }
 
@@ -167,20 +252,31 @@ fn admin_page(home: &Path, token: &str, notice: Option<&str>) -> Vec<u8> {
         html.push_str(&format!("<p>{}</p>", escape(notice)));
     }
     html.push_str("<form method=\"post\" action=\"/idlehand/admin\">");
-    html.push_str(&format!("<input type=\"hidden\" name=\"csrf\" value=\"{}\">", escape(token)));
+    html.push_str(&format!(
+        "<input type=\"hidden\" name=\"csrf\" value=\"{}\">",
+        escape(token)
+    ));
     for key in setting_keys() {
         let current = display_setting(&config, key);
-        html.push_str(&format!("<p><label>{}<br><input name=\"{}\" value=\"{}\" autocomplete=\"off\"></label></p>", escape(key), escape(key), escape(&current)));
+        html.push_str(&format!(
+            "<p><label>{}<br><input name=\"{}\" value=\"{}\" autocomplete=\"off\"></label></p>",
+            escape(key),
+            escape(key),
+            escape(&current)
+        ));
     }
     html.push_str("<button type=\"submit\">Save</button></form></body></html>");
     html.into_bytes()
 }
 
 fn form_pairs(body: &str) -> Vec<(String, String)> {
-    body.split('&').filter(|pair| !pair.is_empty()).map(|pair| {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        (percent_decode(key), percent_decode(value))
-    }).collect()
+    body.split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (percent_decode(key), percent_decode(value))
+        })
+        .collect()
 }
 
 fn percent_decode(text: &str) -> String {
@@ -189,11 +285,20 @@ fn percent_decode(text: &str) -> String {
 }
 
 fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn http(status: u16, content_type: &str, body: &[u8]) -> Vec<u8> {
-    let reason = match status { 200 => "OK", 400 => "Bad Request", 403 => "Forbidden", 404 => "Not Found", _ => "OK" };
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        403 => "Forbidden",
+        404 => "Not Found",
+        _ => "OK",
+    };
     let mut out = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
     out.extend_from_slice(body);
     out

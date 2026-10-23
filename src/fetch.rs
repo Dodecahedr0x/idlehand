@@ -34,7 +34,11 @@ fn unquote(text: &str) -> String {
     let mut out = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() && bytes[index + 1].is_ascii_hexdigit() && bytes[index + 2].is_ascii_hexdigit() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && bytes[index + 1].is_ascii_hexdigit()
+            && bytes[index + 2].is_ascii_hexdigit()
+        {
             let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
             if let Ok(value) = u8::from_str_radix(hex, 16) {
                 out.push(value);
@@ -89,7 +93,16 @@ fn split_url(raw: &str) -> SplitUrl {
     };
     let (username, password, hostport) = split_userinfo(&netloc);
     let (hostname, port) = split_host(&hostport);
-    SplitUrl { scheme, path, query, fragment, username, password, hostname, port }
+    SplitUrl {
+        scheme,
+        path,
+        query,
+        fragment,
+        username,
+        password,
+        hostname,
+        port,
+    }
 }
 
 fn split_scheme(text: &str) -> (String, String) {
@@ -97,7 +110,9 @@ fn split_scheme(text: &str) -> (String, String) {
         let scheme = &text[..index];
         if !scheme.is_empty()
             && scheme.chars().next().unwrap().is_ascii_alphabetic()
-            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
         {
             return (scheme.to_string(), text[index + 1..].to_string());
         }
@@ -152,7 +167,9 @@ fn parse_qsl(text: &str) -> Vec<(String, String)> {
 }
 
 fn has_credential_key(text: &str) -> bool {
-    parse_qsl(text).into_iter().any(|(key, _)| CREDENTIAL_KEYS.contains(&key.to_ascii_lowercase().as_str()))
+    parse_qsl(text)
+        .into_iter()
+        .any(|(key, _)| CREDENTIAL_KEYS.contains(&key.to_ascii_lowercase().as_str()))
 }
 
 fn without_credential_keys(text: &str) -> String {
@@ -160,7 +177,16 @@ fn without_credential_keys(text: &str) -> String {
         .into_iter()
         .filter(|(key, _)| !CREDENTIAL_KEYS.contains(&key.to_ascii_lowercase().as_str()))
         .collect();
-    kept.into_iter().map(|(k, v)| if v.is_empty() && !text.contains('=') { k } else { format!("{k}={v}") }).collect::<Vec<_>>().join("&")
+    kept.into_iter()
+        .map(|(k, v)| {
+            if v.is_empty() && !text.contains('=') {
+                k
+            } else {
+                format!("{k}={v}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 fn assigned_credential() -> Regex {
@@ -207,8 +233,16 @@ pub fn redact_clone_url(url: &str) -> String {
         out.push_str(&parsed.scheme);
         out.push(':');
     }
-    if !host.is_empty() || parsed.scheme == "file" || parsed.scheme == "https" || parsed.scheme == "http" {
-        if parsed.scheme == "file" || parsed.scheme == "https" || parsed.scheme == "http" || parsed.scheme == "ssh" {
+    if !host.is_empty()
+        || parsed.scheme == "file"
+        || parsed.scheme == "https"
+        || parsed.scheme == "http"
+    {
+        if parsed.scheme == "file"
+            || parsed.scheme == "https"
+            || parsed.scheme == "http"
+            || parsed.scheme == "ssh"
+        {
             out.push_str("//");
         }
         out.push_str(&host);
@@ -247,8 +281,15 @@ pub fn public_url(url: &str) -> String {
     if contains_control_break(url) {
         return String::new();
     }
-    let text = scrub_secrets(url).replace(['\n', '\r'], " ").trim().to_string();
-    if text.is_empty() || text.contains("PRIVATE KEY") || text.len() > 500 || contains_control_break(&text) {
+    let text = scrub_secrets(url)
+        .replace(['\n', '\r'], " ")
+        .trim()
+        .to_string();
+    if text.is_empty()
+        || text.contains("PRIVATE KEY")
+        || text.len() > 500
+        || contains_control_break(&text)
+    {
         return String::new();
     }
     text
@@ -271,14 +312,21 @@ pub fn classify_clone_url(url: &str) -> (Option<String>, String) {
         return (None, "public clones do not use SSH keys".into());
     }
     if scheme == "https" || scheme == "http" {
-        let parts: Vec<&str> = parsed.path.split('/').filter(|part| !part.is_empty()).collect();
+        let parts: Vec<&str> = parsed
+            .path
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
         if parsed.hostname.is_empty() || parts.len() < 2 {
             return (None, "repository URL is not a git repository URL".into());
         }
         return (Some(raw.to_string()), "public clone".into());
     }
     if scheme == "file" || (scheme.is_empty() && raw.starts_with('/')) {
-        return (Some(raw.to_string()), "local repository from the source list".into());
+        return (
+            Some(raw.to_string()),
+            "local repository from the source list".into(),
+        );
     }
     (None, "repository URL is not a public git URL".into())
 }
@@ -294,7 +342,10 @@ pub fn resolve_git() -> Option<String> {
 pub fn git_env(empty_home: &Path) -> std::collections::HashMap<String, String> {
     let home = empty_home.display().to_string();
     [
-        ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+        (
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ),
         ("HOME", home.as_str()),
         ("TMPDIR", "/tmp"),
         ("GIT_CONFIG_GLOBAL", "/dev/null"),
@@ -311,15 +362,20 @@ pub fn git_env(empty_home: &Path) -> std::collections::HashMap<String, String> {
 }
 
 fn clear_workspace(workspace: &Path) -> Result<(), String> {
-    if crate::home::is_symlink(workspace) || workspace.parent().is_some_and(crate::home::is_symlink) {
+    if crate::home::is_symlink(workspace) || workspace.parent().is_some_and(crate::home::is_symlink)
+    {
         return Err("refusing to follow a workspace symlink".into());
     }
     let Some(parent) = workspace.parent() else {
         return Err("refusing to replace a workspace outside its parent".into());
     };
-    let root = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+    let root = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
     if workspace.exists() {
-        let resolved = workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+        let resolved = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
         if !resolved.starts_with(&root) {
             return Err("refusing to replace a workspace outside its parent".into());
         }
@@ -333,7 +389,9 @@ fn remove_failed(workspace: &Path) {
         return;
     }
     if let Some(parent) = workspace.parent() {
-        let root = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+        let root = parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf());
         if workspace.exists() {
             if let Ok(resolved) = workspace.canonicalize() {
                 if resolved.starts_with(&root) {
@@ -344,51 +402,105 @@ fn remove_failed(workspace: &Path) {
     }
 }
 
-pub fn clone_repository(url: &str, workspace: &Path, git_executable: Option<&str>, timeout: Duration) -> FetchResult {
+pub fn clone_repository(
+    url: &str,
+    workspace: &Path,
+    git_executable: Option<&str>,
+    timeout: Duration,
+) -> FetchResult {
     let (allowed, reason) = classify_clone_url(url);
     let Some(allowed) = allowed else {
-        return FetchResult { cloned: false, reason };
+        return FetchResult {
+            cloned: false,
+            reason,
+        };
     };
     let Some(git) = git_executable.map(|s| s.to_string()).or_else(resolve_git) else {
-        return FetchResult { cloned: false, reason: "git is not installed".into() };
+        return FetchResult {
+            cloned: false,
+            reason: "git is not installed".into(),
+        };
     };
     if let Err(blocked) = clear_workspace(workspace) {
-        return FetchResult { cloned: false, reason: blocked };
+        return FetchResult {
+            cloned: false,
+            reason: blocked,
+        };
     }
     if let Some(parent) = workspace.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let scheme = split_url(&allowed).scheme.to_ascii_lowercase();
-    let mut command = vec![git, "-c".into(), "credential.helper=".into(), "-c".into(), "core.askPass=".into()];
+    let mut command = vec![
+        git,
+        "-c".into(),
+        "credential.helper=".into(),
+        "-c".into(),
+        "core.askPass=".into(),
+    ];
     if scheme == "file" || scheme.is_empty() {
         command.extend(["-c".into(), "protocol.file.allow=always".into()]);
     }
-    command.extend(["clone".into(), "--depth".into(), "1".into(), "--no-tags".into(), "--".into(), allowed, workspace.display().to_string()]);
+    command.extend([
+        "clone".into(),
+        "--depth".into(),
+        "1".into(),
+        "--no-tags".into(),
+        "--".into(),
+        allowed,
+        workspace.display().to_string(),
+    ]);
     let empty_home = std::env::temp_dir().join(format!("idlehand-fetch-{}", std::process::id()));
     let _ = fs::create_dir_all(&empty_home);
-    let unique = empty_home.join(format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
+    let unique = empty_home.join(format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
     let _ = fs::create_dir_all(&unique);
     let completed = run_git(&command, &unique, timeout);
     let _ = fs::remove_dir_all(&unique);
     match completed {
         GitRun::Timeout => {
             remove_failed(workspace);
-            FetchResult { cloned: false, reason: "clone timed out".into() }
+            FetchResult {
+                cloned: false,
+                reason: "clone timed out".into(),
+            }
         }
         GitRun::Error(err) => {
             remove_failed(workspace);
-            FetchResult { cloned: false, reason: format!("could not run git: {err}") }
+            FetchResult {
+                cloned: false,
+                reason: format!("could not run git: {err}"),
+            }
         }
         GitRun::Done(proc) => {
             if proc.code != 0 || !workspace.join(".git").exists() {
-                let detail = if !proc.stderr.trim().is_empty() { proc.stderr } else { proc.stdout };
+                let detail = if !proc.stderr.trim().is_empty() {
+                    proc.stderr
+                } else {
+                    proc.stdout
+                };
                 let summary = detail.trim().lines().last().unwrap_or("git clone failed");
                 let summary = scrub_secrets(summary).chars().take(200).collect::<String>();
-                let summary = if summary.is_empty() { "git clone failed".into() } else { summary };
+                let summary = if summary.is_empty() {
+                    "git clone failed".into()
+                } else {
+                    summary
+                };
                 remove_failed(workspace);
-                FetchResult { cloned: false, reason: summary }
+                FetchResult {
+                    cloned: false,
+                    reason: summary,
+                }
             } else {
-                FetchResult { cloned: true, reason }
+                FetchResult {
+                    cloned: true,
+                    reason,
+                }
             }
         }
     }

@@ -44,7 +44,11 @@ fn config_home() -> PathBuf {
 
 fn merge_mimeapps(path: &std::path::Path) -> Result<(), String> {
     let key = "x-scheme-handler/idlehand=idlehand.desktop";
-    let existing = if path.exists() { fs::read_to_string(path).map_err(|e| e.to_string())? } else { String::new() };
+    let existing = if path.exists() {
+        fs::read_to_string(path).map_err(|e| e.to_string())?
+    } else {
+        String::new()
+    };
     if existing.contains(key) {
         return Ok(());
     }
@@ -86,7 +90,8 @@ pub fn register_protocol_handler() -> String {
     let result = (|| {
         let desktop_dir = data_home().join("applications");
         fs::create_dir_all(&desktop_dir).map_err(|e| e.to_string())?;
-        fs::write(desktop_dir.join("idlehand.desktop"), desktop_file_text()).map_err(|e| e.to_string())?;
+        fs::write(desktop_dir.join("idlehand.desktop"), desktop_file_text())
+            .map_err(|e| e.to_string())?;
         merge_mimeapps(&config_home().join("mimeapps.list"))?;
         if let Some(xdg) = which("xdg-mime") {
             let _ = Command::new(xdg)

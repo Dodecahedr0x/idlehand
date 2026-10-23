@@ -7,6 +7,7 @@ pub mod analytics;
 pub mod cli;
 pub mod config;
 pub mod configure;
+mod configure_view;
 pub mod engine;
 pub mod fetch;
 pub mod forge;

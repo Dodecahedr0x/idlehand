@@ -48,10 +48,18 @@ pub struct ForgeResult {
 
 impl ForgeResult {
     pub fn new(ok: bool, detail: impl Into<String>) -> Self {
-        Self { ok, detail: detail.into(), output: String::new() }
+        Self {
+            ok,
+            detail: detail.into(),
+            output: String::new(),
+        }
     }
     pub fn with_output(ok: bool, detail: impl Into<String>, output: impl Into<String>) -> Self {
-        Self { ok, detail: detail.into(), output: output.into() }
+        Self {
+            ok,
+            detail: detail.into(),
+            output: output.into(),
+        }
     }
 }
 
@@ -61,7 +69,11 @@ pub fn registered_forges() -> &'static [&'static str] {
 
 pub fn provider_label(name: &str) -> String {
     let re = Regex::new(r"^[a-z][a-z0-9-]{0,20}$").unwrap();
-    if re.is_match(name) { name.to_string() } else { String::new() }
+    if re.is_match(name) {
+        name.to_string()
+    } else {
+        String::new()
+    }
 }
 
 pub fn parse_rid(value: &str) -> Option<String> {
@@ -99,7 +111,13 @@ pub fn parse_repo_name(value: &str) -> Option<String> {
             Some(index) => (&rest[..index], &rest[index..]),
             None => (rest, ""),
         };
-        let host = host.rsplit('@').next().unwrap_or(host).split(':').next().unwrap_or(host);
+        let host = host
+            .rsplit('@')
+            .next()
+            .unwrap_or(host)
+            .split(':')
+            .next()
+            .unwrap_or(host);
         if !host.eq_ignore_ascii_case("github.com") {
             return None;
         }
@@ -115,7 +133,8 @@ pub fn parse_repo_name(value: &str) -> Option<String> {
     }
     let (owner, name) = text.split_once('/')?;
     let part = Regex::new(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$").unwrap();
-    if !part.is_match(owner) || !part.is_match(name) || owner.contains("..") || name.contains("..") {
+    if !part.is_match(owner) || !part.is_match(name) || owner.contains("..") || name.contains("..")
+    {
         return None;
     }
     Some(format!("{owner}/{name}"))
@@ -123,15 +142,25 @@ pub fn parse_repo_name(value: &str) -> Option<String> {
 
 pub fn parse_number(value: &str) -> Option<i64> {
     let re = Regex::new(r"^[1-9][0-9]{0,9}$").unwrap();
-    if !re.is_match(value) { None } else { value.parse().ok() }
+    if !re.is_match(value) {
+        None
+    } else {
+        value.parse().ok()
+    }
 }
 
 pub fn parse_ref(value: &str) -> Option<String> {
     let text = value.trim();
-    if text.is_empty() || contains_control_break(text) || text.contains("..") || text.starts_with('-') {
+    if text.is_empty()
+        || contains_control_break(text)
+        || text.contains("..")
+        || text.starts_with('-')
+    {
         return None;
     }
-    let re = Regex::new(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(?::[A-Za-z0-9_][A-Za-z0-9_./-]{0,150})?$").unwrap();
+    let re =
+        Regex::new(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(?::[A-Za-z0-9_][A-Za-z0-9_./-]{0,150})?$")
+            .unwrap();
     re.is_match(text).then(|| text.to_string())
 }
 
@@ -181,7 +210,9 @@ pub fn save_delegated(home: &Path, rows: &[(String, String)]) -> bool {
     let Ok(text) = dump_toml(&toml::Value::Table(root), DELEGATED_HEADER) else {
         return false;
     };
-    let Ok(_lock) = HomeLock::acquire(home) else { return false };
+    let Ok(_lock) = HomeLock::acquire(home) else {
+        return false;
+    };
     if home::is_symlink(&path) {
         return false;
     }
@@ -206,8 +237,16 @@ fn known<'a>(rows: &'a [(String, String)], provider: &str, repo: &str) -> Option
 pub fn delegation_status(provider: &str) -> ForgeAccount {
     if provider != "github" {
         let label = provider_label(provider);
-        let suffix = if label.is_empty() { String::new() } else { format!(" named {label}") };
-        return ForgeAccount { connected: false, detail: format!("IdleHand has no forge provider{suffix}"), login: String::new() };
+        let suffix = if label.is_empty() {
+            String::new()
+        } else {
+            format!(" named {label}")
+        };
+        return ForgeAccount {
+            connected: false,
+            detail: format!("IdleHand has no forge provider{suffix}"),
+            login: String::new(),
+        };
     }
     GitHub.account()
 }
@@ -242,9 +281,17 @@ pub fn delegate_repo(home: &Path, provider: &str, raw_repo: &str) -> ForgeResult
         return ForgeResult::new(false, account.detail);
     }
     let (found, detail) = GitHub.manageable_repos(&account.login);
-    let Some(found) = found else { return ForgeResult::new(false, detail) };
-    let Some(matched) = found.into_iter().find(|item| item.name.eq_ignore_ascii_case(&repo)) else {
-        return ForgeResult::new(false, "that repository is not owned or administered by the gh login");
+    let Some(found) = found else {
+        return ForgeResult::new(false, detail);
+    };
+    let Some(matched) = found
+        .into_iter()
+        .find(|item| item.name.eq_ignore_ascii_case(&repo))
+    else {
+        return ForgeResult::new(
+            false,
+            "that repository is not owned or administered by the gh login",
+        );
     };
     rows.push((provider.to_string(), matched.name.clone()));
     if !save_delegated(home, &rows) {
@@ -266,7 +313,10 @@ pub fn revoke_repo(home: &Path, provider: &str, raw_repo: &str) -> ForgeResult {
     let Some(existing) = known(&rows, provider, &repo).map(str::to_string) else {
         return ForgeResult::new(false, "that repository is not delegated");
     };
-    let kept: Vec<_> = rows.into_iter().filter(|(item, name)| !(item == provider && name == &existing)).collect();
+    let kept: Vec<_> = rows
+        .into_iter()
+        .filter(|(item, name)| !(item == provider && name == &existing))
+        .collect();
     if !save_delegated(home, &kept) {
         return ForgeResult::new(false, "the delegation list is unreadable");
     }
@@ -278,7 +328,10 @@ fn delegated_name(home: &Path, provider: &str, raw_repo: &str) -> Result<String,
         return Err(ForgeResult::new(false, delegation_status(provider).detail));
     }
     let Some(repo) = parse_repo_name(raw_repo) else {
-        return Err(ForgeResult::new(false, "repository must look like owner/name"));
+        return Err(ForgeResult::new(
+            false,
+            "repository must look like owner/name",
+        ));
     };
     let Some(rows) = load_delegated(home) else {
         return Err(ForgeResult::new(false, "the delegation list is unreadable"));
@@ -291,15 +344,42 @@ fn delegated_name(home: &Path, provider: &str, raw_repo: &str) -> Result<String,
         return Err(ForgeResult::new(false, account.detail));
     }
     let (found, detail) = GitHub.manageable_repos(&account.login);
-    let Some(found) = found else { return Err(ForgeResult::new(false, detail)) };
-    found.into_iter().find(|item| item.name.eq_ignore_ascii_case(&existing)).map(|item| item.name).ok_or_else(|| ForgeResult::new(false, "that repository is not owned or administered by the gh login"))
+    let Some(found) = found else {
+        return Err(ForgeResult::new(false, detail));
+    };
+    found
+        .into_iter()
+        .find(|item| item.name.eq_ignore_ascii_case(&existing))
+        .map(|item| item.name)
+        .ok_or_else(|| {
+            ForgeResult::new(
+                false,
+                "that repository is not owned or administered by the gh login",
+            )
+        })
 }
 
-pub fn checked_text(title: &str, body: &str, require_title: bool, require_body: bool) -> Option<ForgeResult> {
-    if PRIVATE_KEY.iter().any(|marker| title.contains(marker) || body.contains(marker)) {
-        return Some(ForgeResult::new(false, "the draft contains private key material"));
+pub fn checked_text(
+    title: &str,
+    body: &str,
+    require_title: bool,
+    require_body: bool,
+) -> Option<ForgeResult> {
+    if PRIVATE_KEY
+        .iter()
+        .any(|marker| title.contains(marker) || body.contains(marker))
+    {
+        return Some(ForgeResult::new(
+            false,
+            "the draft contains private key material",
+        ));
     }
-    if title.contains('\0') || body.contains('\0') || title.contains('\r') || body.contains('\r') || title.contains('\n') {
+    if title.contains('\0')
+        || body.contains('\0')
+        || title.contains('\r')
+        || body.contains('\r')
+        || title.contains('\n')
+    {
         return Some(ForgeResult::new(false, "the title or body is unreadable"));
     }
     if require_title && title.trim().is_empty() {
@@ -317,7 +397,13 @@ pub fn checked_text(title: &str, body: &str, require_title: bool, require_body: 
     None
 }
 
-pub fn create_issue(home: &Path, provider: &str, raw_repo: &str, title: &str, body: &str) -> ForgeResult {
+pub fn create_issue(
+    home: &Path,
+    provider: &str,
+    raw_repo: &str,
+    title: &str,
+    body: &str,
+) -> ForgeResult {
     if let Some(refused) = checked_text(title, body, true, true) {
         return refused;
     }
@@ -328,7 +414,14 @@ pub fn create_issue(home: &Path, provider: &str, raw_repo: &str, title: &str, bo
     GitHub.create_issue(&repo, title.trim(), body)
 }
 
-pub fn update_issue(home: &Path, provider: &str, raw_repo: &str, number: i64, title: &str, body: &str) -> ForgeResult {
+pub fn update_issue(
+    home: &Path,
+    provider: &str,
+    raw_repo: &str,
+    number: i64,
+    title: &str,
+    body: &str,
+) -> ForgeResult {
     if number < 1 {
         return ForgeResult::new(false, "the issue number is unreadable");
     }
@@ -345,7 +438,15 @@ pub fn update_issue(home: &Path, provider: &str, raw_repo: &str, number: i64, ti
     GitHub.update_issue(&repo, number, title.trim(), body)
 }
 
-pub fn create_pull_request(home: &Path, provider: &str, raw_repo: &str, title: &str, body: &str, head: &str, base: &str) -> ForgeResult {
+pub fn create_pull_request(
+    home: &Path,
+    provider: &str,
+    raw_repo: &str,
+    title: &str,
+    body: &str,
+    head: &str,
+    base: &str,
+) -> ForgeResult {
     let Some(checked_head) = parse_ref(head) else {
         return ForgeResult::new(false, "the branch name is unreadable");
     };
@@ -367,7 +468,14 @@ pub fn create_pull_request(home: &Path, provider: &str, raw_repo: &str, title: &
     GitHub.create_pull_request(&repo, title.trim(), body, &checked_head, &checked_base)
 }
 
-pub fn update_pull_request(home: &Path, provider: &str, raw_repo: &str, number: i64, title: &str, body: &str) -> ForgeResult {
+pub fn update_pull_request(
+    home: &Path,
+    provider: &str,
+    raw_repo: &str,
+    number: i64,
+    title: &str,
+    body: &str,
+) -> ForgeResult {
     if number < 1 {
         return ForgeResult::new(false, "the pull request number is unreadable");
     }
@@ -385,7 +493,9 @@ pub fn update_pull_request(home: &Path, provider: &str, raw_repo: &str, number: 
 }
 
 fn draft_urls(home: &Path, repo: &str) -> Vec<String> {
-    let Some((owner, name)) = repo.split_once('/') else { return Vec::new() };
+    let Some((owner, name)) = repo.split_once('/') else {
+        return Vec::new();
+    };
     let mut urls = vec![
         format!("https://github.com/{owner}/{name}"),
         format!("https://github.com/{owner}/{name}.git"),
@@ -395,7 +505,10 @@ fn draft_urls(home: &Path, repo: &str) -> Vec<String> {
     ];
     if let Ok(sources) = load_sources(home) {
         for source in sources {
-            if parse_repo_name(&source.url).as_deref().is_some_and(|parsed| parsed.eq_ignore_ascii_case(repo)) {
+            if parse_repo_name(&source.url)
+                .as_deref()
+                .is_some_and(|parsed| parsed.eq_ignore_ascii_case(repo))
+            {
                 urls.push(source.url);
             }
         }
@@ -435,12 +548,19 @@ fn split_draft(text: &str) -> Option<(String, String)> {
     if lines.is_empty() || lines[0].trim().is_empty() {
         return None;
     }
-    let title = if let Some(rest) = lines[0].strip_prefix("# ") { rest.trim().to_string() } else { lines[0].trim().to_string() };
+    let title = if let Some(rest) = lines[0].strip_prefix("# ") {
+        rest.trim().to_string()
+    } else {
+        lines[0].trim().to_string()
+    };
     if title.is_empty() {
         return None;
     }
     let mut body_lines = &lines[1..];
-    if body_lines.first().is_some_and(|line| line.trim().is_empty()) {
+    if body_lines
+        .first()
+        .is_some_and(|line| line.trim().is_empty())
+    {
         body_lines = &body_lines[1..];
     }
     Some((title, body_lines.join("\n").trim().to_string()))
@@ -454,16 +574,21 @@ pub(crate) fn draft_slug(text: &str) -> String {
 fn sha256(bytes: &[u8]) -> [u8; 32] {
     // Compact SHA-256 so draft directories match the Python node.
     const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
-    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
     let bit_len = (bytes.len() as u64) * 8;
     let mut data = bytes.to_vec();
     data.push(0x80);
@@ -479,13 +604,20 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
         let mut a = h;
         for i in 0..64 {
             let s1 = a[4].rotate_right(6) ^ a[4].rotate_right(11) ^ a[4].rotate_right(25);
             let ch = (a[4] & a[5]) ^ (!a[4] & a[6]);
-            let t1 = a[7].wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let t1 = a[7]
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
             let s0 = a[0].rotate_right(2) ^ a[0].rotate_right(13) ^ a[0].rotate_right(22);
             let maj = (a[0] & a[1]) ^ (a[0] & a[2]) ^ (a[1] & a[2]);
             let t2 = s0.wrapping_add(maj);
@@ -522,12 +654,21 @@ pub fn send_issue_draft(home: &Path, provider: &str, raw_repo: &str) -> ForgeRes
     create_issue(home, provider, &repo, &title, &body)
 }
 
-pub fn send_pull_request_draft(home: &Path, provider: &str, raw_repo: &str, head: &str, base: &str) -> ForgeResult {
+pub fn send_pull_request_draft(
+    home: &Path,
+    provider: &str,
+    raw_repo: &str,
+    head: &str,
+    base: &str,
+) -> ForgeResult {
     let Some(repo) = parse_repo_name(raw_repo) else {
         return ForgeResult::new(false, "repository must look like owner/name");
     };
     let Some((title, body)) = find_draft(home, &repo, "pr-draft.md") else {
-        return ForgeResult::new(false, "there is no local pull request draft for that repository");
+        return ForgeResult::new(
+            false,
+            "there is no local pull request draft for that repository",
+        );
     };
     if body.is_empty() {
         return ForgeResult::new(false, "the draft has no body");

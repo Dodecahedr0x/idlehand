@@ -99,7 +99,11 @@ pub fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
         }
     }
     let temporary = tmp_sibling(path);
-    if temporary.symlink_metadata().map(|meta| meta.file_type().is_symlink()).unwrap_or(false) {
+    if temporary
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
         fs::remove_file(&temporary)?;
     }
     {
@@ -133,11 +137,11 @@ fn tmp_sibling(path: &Path) -> PathBuf {
     let file_name = if path.extension().is_some() {
         format!(
             "{stem}{suffix}",
-            stem = path.file_stem().map(|v| v.to_string_lossy().to_string()).unwrap_or(stem),
-            suffix = format!(
-                ".{}.tmp",
-                path.extension().unwrap().to_string_lossy()
-            )
+            stem = path
+                .file_stem()
+                .map(|v| v.to_string_lossy().to_string())
+                .unwrap_or(stem),
+            suffix = format!(".{}.tmp", path.extension().unwrap().to_string_lossy())
         )
     } else {
         format!("{stem}.tmp")
@@ -176,7 +180,9 @@ pub fn read_json(path: &Path) -> Result<Option<Json>, String> {
         return Err("refusing to follow a symlink".into());
     }
     let text = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    serde_json::from_str(&text).map(Some).map_err(|err| err.to_string())
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|err| err.to_string())
 }
 
 pub fn toml_string(value: &str) -> String {

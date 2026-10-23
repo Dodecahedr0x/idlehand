@@ -1,8 +1,8 @@
 //! Start and stop the long-running node process.
 
 use std::fs;
-use std::path::Path;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,7 +21,13 @@ pub fn cmdline(pid: u32) -> String {
         }
     }
     let completed = procutil::run(
-        &["ps".into(), "-p".into(), pid.to_string(), "-o".into(), "command=".into()],
+        &[
+            "ps".into(),
+            "-p".into(),
+            pid.to_string(),
+            "-o".into(),
+            "command=".into(),
+        ],
         None,
         None,
         Duration::from_secs(2),

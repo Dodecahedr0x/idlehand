@@ -14,7 +14,11 @@ pub fn jail_main(args: &[String]) -> i32 {
         eprintln!("idlehand-sandbox-setup: missing command");
         return 97;
     }
-    let workspace = match options.iter().position(|arg| arg == "--workspace").and_then(|index| options.get(index + 1)) {
+    let workspace = match options
+        .iter()
+        .position(|arg| arg == "--workspace")
+        .and_then(|index| options.get(index + 1))
+    {
         Some(path) => path,
         None => {
             eprintln!("idlehand-sandbox-setup: missing workspace");
@@ -71,7 +75,9 @@ mod linux {
         if crate::home::is_symlink(workspace) {
             return Err("refusing to follow a workspace symlink".into());
         }
-        let workspace = workspace.canonicalize().map_err(|_| format!("workspace does not exist: {}", workspace.display()))?;
+        let workspace = workspace
+            .canonicalize()
+            .map_err(|_| format!("workspace does not exist: {}", workspace.display()))?;
         if !workspace.is_dir() {
             return Err(format!("workspace does not exist: {}", workspace.display()));
         }
@@ -79,14 +85,20 @@ mod linux {
             "x86_64" => 155,
             "aarch64" => 41,
             "arm" => 218,
-            _ => return Err(format!("no pivot_root syscall for {}", std::env::consts::ARCH)),
+            _ => {
+                return Err(format!(
+                    "no pivot_root syscall for {}",
+                    std::env::consts::ARCH
+                ))
+            }
         };
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
         let jail = std::path::PathBuf::from(format!("/tmp/idlehand-jail-{}", std::process::id()));
         fs::create_dir(&jail).map_err(|err| err.to_string())?;
         let _ = fs::set_permissions(&jail, fs::Permissions::from_mode(0o700));
-        let flags = CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS | CLONE_NEWPID;
+        let flags =
+            CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS | CLONE_NEWPID;
         if unsafe { libc::unshare(flags) } != 0 {
             return Err(io::Error::last_os_error().to_string());
         }
@@ -101,24 +113,64 @@ mod linux {
         if child > 0 {
             let mut status = 0;
             unsafe { libc::waitpid(child, &mut status, 0) };
-            let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { 1 };
+            let code = if libc::WIFEXITED(status) {
+                libc::WEXITSTATUS(status)
+            } else {
+                1
+            };
             std::process::exit(code);
         }
         mount(None, "/", None, MS_REC | MS_PRIVATE, None)?;
-        mount(Some("tmpfs"), &jail.to_string_lossy(), Some("tmpfs"), MS_NOSUID | MS_NODEV, Some("size=512m"))?;
+        mount(
+            Some("tmpfs"),
+            &jail.to_string_lossy(),
+            Some("tmpfs"),
+            MS_NOSUID | MS_NODEV,
+            Some("size=512m"),
+        )?;
         stage_runtime(&jail, command)?;
         for name in ["work", "tmp", "var", "proc", "oldroot", "dev"] {
             fs::create_dir_all(jail.join(name)).ok();
         }
-        mount(Some("proc"), &jail.join("proc").to_string_lossy(), Some("proc"), MS_NOSUID | MS_NODEV | MS_NOEXEC, None)?;
+        mount(
+            Some("proc"),
+            &jail.join("proc").to_string_lossy(),
+            Some("proc"),
+            MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            None,
+        )?;
         fs::create_dir_all(jail.join("var/tmp")).ok();
-        mount(Some("tmpfs"), &jail.join("tmp").to_string_lossy(), Some("tmpfs"), MS_NOSUID | MS_NODEV | MS_NOEXEC, Some("size=64m"))?;
-        mount(Some("tmpfs"), &jail.join("var/tmp").to_string_lossy(), Some("tmpfs"), MS_NOSUID | MS_NODEV, Some("size=256m"))?;
-        mount(Some(&workspace.to_string_lossy()), &jail.join("work").to_string_lossy(), None, MS_BIND, None)?;
+        mount(
+            Some("tmpfs"),
+            &jail.join("tmp").to_string_lossy(),
+            Some("tmpfs"),
+            MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            Some("size=64m"),
+        )?;
+        mount(
+            Some("tmpfs"),
+            &jail.join("var/tmp").to_string_lossy(),
+            Some("tmpfs"),
+            MS_NOSUID | MS_NODEV,
+            Some("size=256m"),
+        )?;
+        mount(
+            Some(&workspace.to_string_lossy()),
+            &jail.join("work").to_string_lossy(),
+            None,
+            MS_BIND,
+            None,
+        )?;
         for device in ["null", "zero", "urandom"] {
             let target = jail.join("dev").join(device);
             File::create(&target).ok();
-            mount(Some(&format!("/dev/{device}")), &target.to_string_lossy(), None, MS_BIND, None)?;
+            mount(
+                Some(&format!("/dev/{device}")),
+                &target.to_string_lossy(),
+                None,
+                MS_BIND,
+                None,
+            )?;
         }
         remount_readonly(&jail.join("usr"))?;
         std::env::set_current_dir(&jail).map_err(|err| err.to_string())?;
@@ -134,14 +186,22 @@ mod linux {
         std::env::set_current_dir("/").ok();
         let oldroot = std::ffi::CString::new("/oldroot").unwrap();
         if unsafe { libc::umount2(oldroot.as_ptr(), MNT_DETACH) } != 0 {
-            return Err(format!("umount of old root failed: {}", io::Error::last_os_error()));
+            return Err(format!(
+                "umount of old root failed: {}",
+                io::Error::last_os_error()
+            ));
         }
         let _ = fs::remove_dir("/oldroot");
         std::env::set_current_dir("/work").ok();
         unsafe { libc::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-        let program = std::ffi::CString::new(command[0].as_str()).map_err(|_| "bad command".to_string())?;
-        let mut c_args: Vec<std::ffi::CString> = command.iter().map(|arg| std::ffi::CString::new(arg.as_str()).unwrap_or_default()).collect();
-        let mut argv: Vec<*const libc::c_char> = c_args.iter_mut().map(|arg| arg.as_ptr()).collect();
+        let program =
+            std::ffi::CString::new(command[0].as_str()).map_err(|_| "bad command".to_string())?;
+        let mut c_args: Vec<std::ffi::CString> = command
+            .iter()
+            .map(|arg| std::ffi::CString::new(arg.as_str()).unwrap_or_default())
+            .collect();
+        let mut argv: Vec<*const libc::c_char> =
+            c_args.iter_mut().map(|arg| arg.as_ptr()).collect();
         argv.push(std::ptr::null());
         let env_items = [
             std::ffi::CString::new("PATH=/usr/bin:/bin").unwrap(),
@@ -149,28 +209,47 @@ mod linux {
             std::ffi::CString::new("TMPDIR=/var/tmp").unwrap(),
             std::ffi::CString::new("PYTHONDONTWRITEBYTECODE=1").unwrap(),
         ];
-        let mut envp: Vec<*const libc::c_char> = env_items.iter().map(|item| item.as_ptr()).collect();
+        let mut envp: Vec<*const libc::c_char> =
+            env_items.iter().map(|item| item.as_ptr()).collect();
         envp.push(std::ptr::null());
         unsafe { libc::execve(program.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
         Err(io::Error::last_os_error().to_string())
     }
 
-    fn mount(src: Option<&str>, target: &str, fstype: Option<&str>, flags: u64, data: Option<&str>) -> Result<(), String> {
+    fn mount(
+        src: Option<&str>,
+        target: &str,
+        fstype: Option<&str>,
+        flags: u64,
+        data: Option<&str>,
+    ) -> Result<(), String> {
         let src_c = src.map(|value| std::ffi::CString::new(value).unwrap());
         let target_c = std::ffi::CString::new(target).unwrap();
         let type_c = fstype.map(|value| std::ffi::CString::new(value).unwrap());
         let data_c = data.map(|value| std::ffi::CString::new(value).unwrap());
         let result = unsafe {
             libc::mount(
-                src_c.as_ref().map(|v| v.as_ptr()).unwrap_or(std::ptr::null()),
+                src_c
+                    .as_ref()
+                    .map(|v| v.as_ptr())
+                    .unwrap_or(std::ptr::null()),
                 target_c.as_ptr(),
-                type_c.as_ref().map(|v| v.as_ptr()).unwrap_or(std::ptr::null()),
+                type_c
+                    .as_ref()
+                    .map(|v| v.as_ptr())
+                    .unwrap_or(std::ptr::null()),
                 flags,
-                data_c.as_ref().map(|v| v.as_ptr() as *const libc::c_void).unwrap_or(std::ptr::null()),
+                data_c
+                    .as_ref()
+                    .map(|v| v.as_ptr() as *const libc::c_void)
+                    .unwrap_or(std::ptr::null()),
             )
         };
         if result != 0 {
-            Err(format!("mount {src:?} -> {target} failed: {}", io::Error::last_os_error()))
+            Err(format!(
+                "mount {src:?} -> {target} failed: {}",
+                io::Error::last_os_error()
+            ))
         } else {
             Ok(())
         }
@@ -195,7 +274,10 @@ mod linux {
         let current = unsafe { libc::ioctl(sock, 0x8913, request.as_mut_ptr()) };
         if current < 0 {
             unsafe { libc::close(sock) };
-            return Err(format!("loopback did not come up: {}", io::Error::last_os_error()));
+            return Err(format!(
+                "loopback did not come up: {}",
+                io::Error::last_os_error()
+            ));
         }
         let flags = u16::from_ne_bytes([request[16], request[17]]);
         let mut updated = [0u8; 40];
@@ -204,7 +286,10 @@ mod linux {
         let result = unsafe { libc::ioctl(sock, 0x8914, updated.as_mut_ptr()) };
         unsafe { libc::close(sock) };
         if result < 0 {
-            Err(format!("loopback did not come up: {}", io::Error::last_os_error()))
+            Err(format!(
+                "loopback did not come up: {}",
+                io::Error::last_os_error()
+            ))
         } else {
             Ok(())
         }
@@ -220,20 +305,37 @@ mod linux {
         }
         let text = binary.to_string_lossy();
         if !text.starts_with("/usr/") && !text.starts_with("/bin/") {
-            return Err(format!("refusing to stage {text} from outside /usr or /bin"));
+            return Err(format!(
+                "refusing to stage {text} from outside /usr or /bin"
+            ));
         }
         stage_lookup(root, binary, &mut std::collections::BTreeSet::new())?;
-        let resolved = binary.canonicalize().unwrap_or_else(|_| binary.to_path_buf());
+        let resolved = binary
+            .canonicalize()
+            .unwrap_or_else(|_| binary.to_path_buf());
         for library in ldd_paths(&resolved) {
             stage_lookup(root, &library, &mut std::collections::BTreeSet::new())?;
         }
-        if let Some(stdlib) = stdlib_path(if resolved.file_name().and_then(|n| n.to_str()).unwrap_or("").contains("python") {
-            &resolved
-        } else {
-            binary
-        }) {
+        if let Some(stdlib) = stdlib_path(
+            if resolved
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .contains("python")
+            {
+                &resolved
+            } else {
+                binary
+            },
+        ) {
             let destination = root.join(stdlib.strip_prefix("/").unwrap_or(&stdlib));
-            let _ = Command::new("cp").args(["-a", &stdlib.to_string_lossy(), &destination.to_string_lossy()]).status();
+            let _ = Command::new("cp")
+                .args([
+                    "-a",
+                    &stdlib.to_string_lossy(),
+                    &destination.to_string_lossy(),
+                ])
+                .status();
             stage_git(root);
         }
         Ok(())
@@ -241,10 +343,24 @@ mod linux {
 
     fn stage_git(root: &Path) {
         for program in [
-            "/usr/bin/git", "/bin/sh", "/bin/bash", "/usr/bin/env", "/bin/cat", "/usr/bin/true", "/bin/false", "/bin/mkdir",
-            "/bin/rm", "/usr/bin/touch", "/bin/ls", "/bin/sleep",
+            "/usr/bin/git",
+            "/bin/sh",
+            "/bin/bash",
+            "/usr/bin/env",
+            "/bin/cat",
+            "/usr/bin/true",
+            "/bin/false",
+            "/bin/mkdir",
+            "/bin/rm",
+            "/usr/bin/touch",
+            "/bin/ls",
+            "/bin/sleep",
         ] {
-            let _ = stage_lookup(root, Path::new(program), &mut std::collections::BTreeSet::new());
+            let _ = stage_lookup(
+                root,
+                Path::new(program),
+                &mut std::collections::BTreeSet::new(),
+            );
         }
     }
 
@@ -267,12 +383,24 @@ mod linux {
             return None;
         }
         let path = std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-        if path.is_dir() && path.starts_with("/usr/") { Some(path) } else { None }
+        if path.is_dir() && path.starts_with("/usr/") {
+            Some(path)
+        } else {
+            None
+        }
     }
 
     fn ldd_paths(binary: &Path) -> Vec<std::path::PathBuf> {
-        let output = Command::new("ldd").arg(binary).env_clear().env("PATH", "/usr/bin:/bin").env("LANG", "C").output().ok();
-        let Some(output) = output else { return Vec::new() };
+        let output = Command::new("ldd")
+            .arg(binary)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LANG", "C")
+            .output()
+            .ok();
+        let Some(output) = output else {
+            return Vec::new();
+        };
         let text = String::from_utf8_lossy(&output.stdout);
         let mut paths = Vec::new();
         for line in text.lines() {
@@ -291,7 +419,11 @@ mod linux {
         paths
     }
 
-    fn stage_lookup(root: &Path, path: &Path, seen: &mut std::collections::BTreeSet<String>) -> Result<(), String> {
+    fn stage_lookup(
+        root: &Path,
+        path: &Path,
+        seen: &mut std::collections::BTreeSet<String>,
+    ) -> Result<(), String> {
         let path = std::path::PathBuf::from(path.components().collect::<std::path::PathBuf>());
         let key = path.display().to_string();
         if !seen.insert(key) {
@@ -309,7 +441,11 @@ mod linux {
                     if !dest.exists() && !dest.symlink_metadata().is_ok() {
                         let _ = std::os::unix::fs::symlink(&link, &dest);
                     }
-                    let target = if link.is_absolute() { link } else { current.parent().unwrap_or(Path::new("/")).join(link) };
+                    let target = if link.is_absolute() {
+                        link
+                    } else {
+                        current.parent().unwrap_or(Path::new("/")).join(link)
+                    };
                     return stage_lookup(root, &target, seen);
                 }
             }

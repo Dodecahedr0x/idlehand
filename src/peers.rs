@@ -24,7 +24,9 @@ pub struct PeerCandidate {
 fn scheme_label(scheme: &str) -> String {
     if !scheme.is_empty()
         && scheme.chars().next().unwrap().is_ascii_alphabetic()
-        && scheme.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '.' | '-'))
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '.' | '-'))
     {
         format!(": {scheme}")
     } else {
@@ -43,12 +45,19 @@ pub fn normalize_peer_url(url: &str) -> Result<String, String> {
     let parsed = split_peer(raw);
     let scheme = parsed.scheme.to_ascii_lowercase();
     if !matches!(scheme.as_str(), "https" | "http" | "file") {
-        return Err(format!("unsupported peer URL scheme{}", scheme_label(&scheme)));
+        return Err(format!(
+            "unsupported peer URL scheme{}",
+            scheme_label(&scheme)
+        ));
     }
     if matches!(scheme.as_str(), "https" | "http") && parsed.host.is_empty() {
         return Err("peer URL needs a host".into());
     }
-    let mut netloc = if parsed.host.contains(':') { format!("[{}]", parsed.host) } else { parsed.host.clone() };
+    let mut netloc = if parsed.host.contains(':') {
+        format!("[{}]", parsed.host)
+    } else {
+        parsed.host.clone()
+    };
     if let Some(port) = parsed.port {
         netloc = format!("{netloc}:{port}");
     }
@@ -74,8 +83,14 @@ struct PeerParts {
 
 fn split_peer(raw: &str) -> PeerParts {
     let (left, _fragment) = raw.split_once('#').unwrap_or((raw, ""));
-    let (left, query) = left.split_once('?').map(|(l, q)| (l, q.to_string())).unwrap_or((left, String::new()));
-    let (scheme, rest) = left.split_once(':').map(|(s, r)| (s.to_string(), r.to_string())).unwrap_or_else(|| (String::new(), left.to_string()));
+    let (left, query) = left
+        .split_once('?')
+        .map(|(l, q)| (l, q.to_string()))
+        .unwrap_or((left, String::new()));
+    let (scheme, rest) = left
+        .split_once(':')
+        .map(|(s, r)| (s.to_string(), r.to_string()))
+        .unwrap_or_else(|| (String::new(), left.to_string()));
     let rest = rest.trim_start_matches("//");
     let (authority, path) = match rest.find('/') {
         Some(index) => (rest[..index].to_string(), rest[index..].to_string()),
@@ -95,7 +110,13 @@ fn split_peer(raw: &str) -> PeerParts {
     } else {
         (authority.to_ascii_lowercase(), None)
     };
-    PeerParts { scheme, host, port, path, query }
+    PeerParts {
+        scheme,
+        host,
+        port,
+        path,
+        query,
+    }
 }
 
 fn host_of(url: &str) -> String {
@@ -113,13 +134,27 @@ pub fn explain_peer_url(url: &str, heuristic: &toml::Value) -> (bool, String) {
     };
     let scheme = scheme_of(&normalized);
     let host = host_of(&normalized);
-    let allow_loopback = heuristic.get("allow_insecure_loopback").and_then(toml::Value::as_bool);
-    let require_https = heuristic.get("require_https").and_then(toml::Value::as_bool);
-    let blocked_raw = heuristic.get("blocked_hosts").and_then(toml::Value::as_array);
-    let allowed_raw = heuristic.get("allowed_hosts").and_then(toml::Value::as_array);
-    let hosts_ok = blocked_raw.zip(allowed_raw).map(|(blocked, allowed)| {
-        blocked.iter().chain(allowed).all(|item| item.as_str().is_some())
-    }).unwrap_or(false);
+    let allow_loopback = heuristic
+        .get("allow_insecure_loopback")
+        .and_then(toml::Value::as_bool);
+    let require_https = heuristic
+        .get("require_https")
+        .and_then(toml::Value::as_bool);
+    let blocked_raw = heuristic
+        .get("blocked_hosts")
+        .and_then(toml::Value::as_array);
+    let allowed_raw = heuristic
+        .get("allowed_hosts")
+        .and_then(toml::Value::as_array);
+    let hosts_ok = blocked_raw
+        .zip(allowed_raw)
+        .map(|(blocked, allowed)| {
+            blocked
+                .iter()
+                .chain(allowed)
+                .all(|item| item.as_str().is_some())
+        })
+        .unwrap_or(false);
     let (Some(allow_loopback), Some(require_https)) = (allow_loopback, require_https) else {
         return (false, "peer heuristic is unreadable".into());
     };
@@ -129,11 +164,19 @@ pub fn explain_peer_url(url: &str, heuristic: &toml::Value) -> (bool, String) {
     if scheme == "file" {
         return (false, "second-degree file URLs are not added".into());
     }
-    let blocked: BTreeSet<String> = blocked_raw.unwrap().iter().filter_map(|i| i.as_str().map(|s| s.to_ascii_lowercase())).collect();
+    let blocked: BTreeSet<String> = blocked_raw
+        .unwrap()
+        .iter()
+        .filter_map(|i| i.as_str().map(|s| s.to_ascii_lowercase()))
+        .collect();
     if blocked.contains(&host) {
         return (false, "host is blocked".into());
     }
-    let allowed: BTreeSet<String> = allowed_raw.unwrap().iter().filter_map(|i| i.as_str().map(|s| s.to_ascii_lowercase())).collect();
+    let allowed: BTreeSet<String> = allowed_raw
+        .unwrap()
+        .iter()
+        .filter_map(|i| i.as_str().map(|s| s.to_ascii_lowercase()))
+        .collect();
     if !allowed.is_empty() && !allowed.contains(&host) {
         return (false, "host is not in allowed_hosts".into());
     }
@@ -150,7 +193,10 @@ pub fn explain_peer_url(url: &str, heuristic: &toml::Value) -> (bool, String) {
     if scheme == "http" {
         return (false, "second-degree peers must use https".into());
     }
-    (false, format!("unsupported peer URL scheme{}", scheme_label(&scheme)))
+    (
+        false,
+        format!("unsupported peer URL scheme{}", scheme_label(&scheme)),
+    )
 }
 
 pub fn review_second_degree(
@@ -176,8 +222,18 @@ pub fn review_second_degree(
         Some(_) => None,
         None => Some(50),
     };
-    let (Some(min_endorsements), Some(max_new), Some(max_peers)) = (min_endorsements, max_new, max_peers) else {
-        return (Vec::new(), vec![decision("peer", "idlehand://peer-heuristic", false, "peer heuristic is unreadable")]);
+    let (Some(min_endorsements), Some(max_new), Some(max_peers)) =
+        (min_endorsements, max_new, max_peers)
+    else {
+        return (
+            Vec::new(),
+            vec![decision(
+                "peer",
+                "idlehand://peer-heuristic",
+                false,
+                "peer heuristic is unreadable",
+            )],
+        );
     };
     let _ = min_endorsements;
     let room = (max_peers - existing_urls.len() as i64).max(0);
@@ -204,13 +260,18 @@ pub fn review_second_degree(
     let mut ids: BTreeMap<String, String> = BTreeMap::new();
     let mut allow_reason: BTreeMap<String, String> = BTreeMap::new();
     for (direct_url, document) in documents {
-        let Some(peers) = document.get("peers").and_then(Value::as_array) else { continue };
+        let Some(peers) = document.get("peers").and_then(Value::as_array) else {
+            continue;
+        };
         let mut seen_here = BTreeSet::new();
         for entry in peers {
             let (raw, peer_id) = if let Some(text) = entry.as_str() {
                 (text.to_string(), String::new())
             } else if let Some(url) = entry.get("url").and_then(Value::as_str) {
-                (url.to_string(), public_label(entry.get("id").and_then(Value::as_str).unwrap_or("")))
+                (
+                    url.to_string(),
+                    public_label(entry.get("id").and_then(Value::as_str).unwrap_or("")),
+                )
             } else {
                 continue;
             };
@@ -233,11 +294,16 @@ pub fn review_second_degree(
                 add_decision(&url, false, "already a peer");
                 continue;
             }
-            if self_norm.contains(&url) || (!peer_id.is_empty() && !self_id.is_empty() && peer_id == self_id) {
+            if self_norm.contains(&url)
+                || (!peer_id.is_empty() && !self_id.is_empty() && peer_id == self_id)
+            {
                 add_decision(&url, false, "this is the local node");
                 continue;
             }
-            endorsements.entry(url.clone()).or_default().insert(direct_url.clone());
+            endorsements
+                .entry(url.clone())
+                .or_default()
+                .insert(direct_url.clone());
             allow_reason.entry(url.clone()).or_insert(reason);
             if !peer_id.is_empty() {
                 ids.entry(url).or_insert(peer_id);
@@ -255,17 +321,31 @@ pub fn review_second_degree(
         .collect();
     for (url, sources) in &endorsements {
         if (sources.len() as i64) < min_endorsements {
-            add_decision(url, false, &format!("needs {min_endorsements} endorsements, has {}", sources.len()));
+            add_decision(
+                url,
+                false,
+                &format!(
+                    "needs {min_endorsements} endorsements, has {}",
+                    sources.len()
+                ),
+            );
         }
     }
     ranked.sort_by(|a, b| b.endorsements.cmp(&a.endorsements).then(a.url.cmp(&b.url)));
-    let chosen_count = if limit > 0 { (limit as usize).min(ranked.len()) } else { 0 };
+    let chosen_count = if limit > 0 {
+        (limit as usize).min(ranked.len())
+    } else {
+        0
+    };
     for candidate in ranked.iter().skip(chosen_count) {
         add_decision(&candidate.url, false, "the peer cap was reached");
     }
     let chosen = ranked.into_iter().take(chosen_count).collect::<Vec<_>>();
     for candidate in &chosen {
-        let reason = allow_reason.get(&candidate.url).map(String::as_str).unwrap_or("https peer URL");
+        let reason = allow_reason
+            .get(&candidate.url)
+            .map(String::as_str)
+            .unwrap_or("https peer URL");
         add_decision(&candidate.url, true, reason);
     }
     (chosen, decisions)
@@ -276,12 +356,17 @@ pub fn normalize_safe(url: &str) -> String {
 }
 
 pub fn count_remote_repos(document: &Value) -> usize {
-    document.get("repos").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0)
+    document
+        .get("repos")
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0)
 }
 
 pub fn load_peer_document(url: &str, timeout: Duration) -> Result<Value, String> {
     let text = fetch_text(url, timeout).map_err(|LinkError(err)| err)?;
-    let payload: Value = serde_json::from_str(&text).map_err(|err| format!("peer document is not JSON: {err}"))?;
+    let payload: Value =
+        serde_json::from_str(&text).map_err(|err| format!("peer document is not JSON: {err}"))?;
     if !payload.is_object() {
         return Err("peer document must be a JSON object".into());
     }
@@ -292,14 +377,26 @@ pub fn public_label(value: &str) -> String {
     if contains_control_break(value) {
         return String::new();
     }
-    let text = scrub_secrets(value).replace(['\n', '\r'], " ").trim().to_string();
-    if text.is_empty() || text.contains("PRIVATE KEY") || text.len() > 200 || contains_control_break(&text) {
+    let text = scrub_secrets(value)
+        .replace(['\n', '\r'], " ")
+        .trim()
+        .to_string();
+    if text.is_empty()
+        || text.contains("PRIVATE KEY")
+        || text.len() > 200
+        || contains_control_break(&text)
+    {
         return String::new();
     }
     text
 }
 
-pub fn publish_document(node_id: &str, listen_url: &str, peers: &[Peer], repos: &[config::Source]) -> Value {
+pub fn publish_document(
+    node_id: &str,
+    listen_url: &str,
+    peers: &[Peer],
+    repos: &[config::Source],
+) -> Value {
     let peers = peers
         .iter()
         .filter_map(|peer| {
@@ -315,7 +412,11 @@ pub fn publish_document(node_id: &str, listen_url: &str, peers: &[Peer], repos: 
         .iter()
         .filter_map(|repo| {
             let shown = public_url(&repo.url);
-            if shown.is_empty() { None } else { Some(serde_json::json!({"url": shown})) }
+            if shown.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!({"url": shown}))
+            }
         })
         .collect::<Vec<_>>();
     serde_json::json!({
@@ -331,10 +432,18 @@ pub fn user_add_peer(home: &Path, url: &str) -> Result<String, String> {
     let normalized = normalize_peer_url(url)?;
     let _lock = HomeLock::acquire(home).map_err(|e| e.to_string())?;
     let mut peers = load_peers(home)?;
-    if peers.iter().any(|peer| normalize_safe(&peer.url) == normalized) {
+    if peers
+        .iter()
+        .any(|peer| normalize_safe(&peer.url) == normalized)
+    {
         return Ok(normalized);
     }
-    peers.push(Peer { url: normalized.clone(), id: String::new(), source: "user".into(), endorsements: 1 });
+    peers.push(Peer {
+        url: normalized.clone(),
+        id: String::new(),
+        source: "user".into(),
+        endorsements: 1,
+    });
     save_peers(home, &peers)?;
     Ok(normalized)
 }

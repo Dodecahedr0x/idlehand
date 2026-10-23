@@ -146,13 +146,18 @@ fn walk(value: &Value, in_result: bool, reported: &mut Vec<i64>, other: &mut Vec
 }
 
 fn relax_json(text: &str) -> String {
-    let replaced = text.replace("-Infinity", "-1.0").replace("Infinity", "1e308").replace("NaN", "1e308");
+    let replaced = text
+        .replace("-Infinity", "-1.0")
+        .replace("Infinity", "1e308")
+        .replace("NaN", "1e308");
     let re = regex::Regex::new(r"(?i)\b[0-9]+(?:\.[0-9]+)?[eE]\+?[0-9]{3,}").unwrap();
     re.replace_all(&replaced, "1e308").into_owned()
 }
 
 fn parse_json_lenient(text: &str) -> Option<Value> {
-    serde_json::from_str(text).ok().or_else(|| serde_json::from_str(&relax_json(text)).ok())
+    serde_json::from_str(text)
+        .ok()
+        .or_else(|| serde_json::from_str(&relax_json(text)).ok())
 }
 
 pub fn parse_reported_tokens(text: &str) -> Option<i64> {
@@ -184,7 +189,10 @@ pub fn parse_reported_tokens(text: &str) -> Option<i64> {
         result_totals.extend(found);
         other_totals.extend(other);
     }
-    result_totals.last().copied().or_else(|| other_totals.last().copied())
+    result_totals
+        .last()
+        .copied()
+        .or_else(|| other_totals.last().copied())
 }
 
 fn empty_planner_dir(home: &Path) -> Option<PathBuf> {
@@ -218,7 +226,12 @@ fn discard_planner_dir(home: &Path, cwd: Option<&Path>) {
     }
 }
 
-pub fn plan_with_claude(binary: &str, repo_url: &str, action: &str, home: &Path) -> serde_json::Value {
+pub fn plan_with_claude(
+    binary: &str,
+    repo_url: &str,
+    action: &str,
+    home: &Path,
+) -> serde_json::Value {
     let argv = claude_argv(binary, repo_url, action);
     let cwd = empty_planner_dir(home);
     let Some(cwd) = cwd else {

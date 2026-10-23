@@ -34,7 +34,7 @@ idlehand init
 idlehand configure
 ```
 
-At the menu, choose `publish`, press Enter for `publish.listen` and `publish.host`, type `47321` for `publish.port`, press Enter for the fetch interval, then `done`. The default port is already 47321. `done` saves and leaves the node stopped.
+At the menu, move to Publish and press Enter. Skip listen and host with `s`. On `publish.port`, type `47321` and press Enter. Skip the fetch interval. Press `q` or move to Done. The default port is already 47321. Done saves and leaves the node stopped.
 
 ```bash
 idlehand rules set allow_issues false
@@ -88,7 +88,7 @@ idlehand init
 idlehand configure
 ```
 
-Choose `publish`, keep listen and host, type `47322` for `publish.port`, then `done`. Configure does not start the node.
+Open Publish, skip listen and host with `s`, set `publish.port` to `47322`, then press `q` or Done. Configure does not start the node.
 
 ```bash
 idlehand rules set allow_test false
