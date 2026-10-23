@@ -1,10 +1,8 @@
 # IdleHand
 
-People who still have credits on Claude, Codex, or Cursor can point those subscriptions at open source. IdleHand runs a local node. The node holds your config, watches a spending limit, and keeps a contribution loop. It uses the credits on the CLI you already have. It does not bill a separate API.
+IdleHand is a local node. It keeps your config, a spending limit, and a contribution loop, and it can call the Claude, Codex, or Cursor CLI already on the machine. It does not bill a separate API. Discovery stays on this machine. There is no IdleHand catalog.
 
-Discovery stays on your machine. There is no IdleHand catalog.
-
-IdleHand is a layer on Radicle. The node id is the Radicle node id when `rad self --nid` can report one. GitHub interop is optional, and init, configure, and the contribution loop do not need it. The GitHub repository that holds this code is not the forge IdleHand manages.
+The node id is the Radicle node id when `rad self --nid` prints one. GitHub is optional. Init, configure, and the loop do not need it. The GitHub repository for this code is not a forge IdleHand manages unless you delegate it.
 
 ## Install
 
@@ -12,186 +10,46 @@ IdleHand is a layer on Radicle. The node id is the Radicle node id when `rad sel
 cargo install --path .
 ```
 
-Or build it in place with `cargo build --release` and run `target/release/idlehand`. The binary has no runtime dependencies beyond the system tools it calls (`git`, and optionally `rad`, `gh`, Docker, Podman, or bubblewrap).
+Or build in place with `cargo build --release` and run `target/release/idlehand`. The binary calls `git`, and optionally `rad`, `gh`, Docker, Podman, or `bwrap`.
 
-## Basic path
+## Home
+
+The home is `~/.idlehand`. `--home PATH` wins, then `IDLEHAND_HOME` when that variable is non-empty. A leading `~` in either path is expanded. `rad` is separate: IdleHand does not set `RAD_HOME`. Any command that runs `rad` uses the `RAD_HOME` of that shell, and `idlehand start` passes that environment to the node process.
 
 ```bash
 idlehand init
 idlehand configure
 idlehand start
-idlehand analytics
-```
-
-`configure` is a section menu. It shows the current value of each setting. Press Enter, or type `skip`, to leave a value unchanged. `back` returns to the menu. `Done` saves what you changed and leaves the node stopped. Subscription is empty, `claude`, `codex`, or `cursor`. Type `none` to clear it. A bad answer is rejected and is not written.
-
-While the node is running, the same settings are on the loopback admin page, `http://127.0.0.1:47321/idlehand/admin` when publish is still on the default address. `idlehand status` prints that URL when the listener is on loopback. The public document at `/idlehand/publish` does not include the subscription, the spending limit, or the home path.
-
-```bash
 idlehand status
-idlehand stop
-```
-
-The home directory is `~/.idlehand`, or `$IDLEHAND_HOME` if that is set.
-
-If `claude`, `codex`, `cursor-agent`, `agent`, or `cursor` is not installed, the node still stays up. `idlehand analytics` says the subscription is not connected, and it does not record a contribution. A dry loop is available:
-
-```bash
-idlehand demo
 idlehand analytics
 idlehand stop
 ```
 
-Demo plans are labeled demo. A demo cycle can clone a repository and run the sandboxed command, and it still does not record a contribution. It also does not invoke the subscription CLI. When Claude reports token usage, analytics shows that reported total. When it does not, the total is labeled as a local estimate. Codex and Cursor are not invoked.
+`init` creates the home, `config.toml`, `sources.toml` (two example repository URLs), `peers.toml`, and `workspaces/`. On Linux it registers an `x-scheme-handler/idlehand` handler when the XDG directories can be written. Elsewhere init prints that the handler was not registered. When `rad` can report an identity, init stores that node id.
 
-## Defaults
+`start` leaves the node running and prints its pid. `stop` sends SIGTERM and then SIGKILL if the process is still alive after five seconds. `configure` does not start the node.
 
-| Setting | Default |
-| --- | --- |
-| Spending limit | 10,000 tokens (`idlehand limit 20000` changes it) |
-| Estimate per cycle | 2,500 tokens |
-| Contribution rules | open: test, audit, issues, and pull requests |
-| Ownership gate | none |
-| Loop | starts after `idlehand start` when a subscription CLI is configured and on `PATH` |
-| Source list | `sources.toml` in the IdleHand home, two example repos you can replace |
-| Listen address | `127.0.0.1:47321`, path `/idlehand/publish` |
-| Peer heuristic | add a second-degree peer after 1 endorsement, at most 5 new peers per cycle, at most 50 peers |
-| Sandbox | Docker, then Podman, then the built-in namespace jail, then bubblewrap |
+## Configure
 
-The loop stops before another cycle would pass the spending limit. Raise the limit and the loop continues. The estimate is not reset when you change the subscription.
+`idlehand configure` is a section menu: Subscription, Spending, Rules, Sandbox, Publish, Peers, and Done. Enter, `done`, or `7` leaves the menu and writes whatever you changed. `skip` or Enter on a field keeps the shown value. `back` returns to the menu. `none` clears the subscription, or a host list. A bad answer is rejected and is not written. Done leaves the node stopped.
 
-Rules can be turned off:
+Subscription is empty, `claude`, `codex`, or `cursor`.
 
-```bash
-idlehand rules show
-idlehand rules set allow_issues false
-```
+While the node is running, the same settings are at `http://127.0.0.1:47321/idlehand/admin` when publish is still on the default address. `idlehand status` prints that URL when the publish host is loopback. A client that is not loopback gets 403. An empty field keeps the stored value. One bad value refuses the whole save.
 
-## Discovery
+`idlehand status` and `idlehand analytics` print the same text report. `idlehand analytics --json` prints JSON.
 
-Three local mechanisms. None of them asks an IdleHand service.
+## What the loop does
 
-**Source list.** `idlehand sources` prints `sources.toml`. Edit it. The node reloads it.
+`idlehand start` starts the loop when `rules.auto_start` is on, the source list has an entry, a contribution rule is on, and the next cycle's estimate would still fit under the spending limit. The default limit is 10,000 tokens (`idlehand limit 20000` changes it). The default estimate is 2,500 tokens per cycle. The loop stops before a cycle that would pass the limit. Changing the subscription does not reset the ledger.
 
-**Links add repos.** The link carries the repos, or it points at a file the publisher hosts:
+Each cycle clones one source-list URL and runs one sandbox action: test, audit, issue, or pull request, in that order, for the rules that are on. The clone accepts a public `http` or `https` URL, or a local path the source list already names. SSH URLs and URLs with embedded credentials are refused.
 
-```bash
-idlehand link 'idlehand://add?repo=https://github.com/pallets/click&repo=https://github.com/encode/httpx'
-idlehand link 'idlehand://add?list=https://example.com/idlehand-repos.txt'
-```
+Codex and Cursor are not executed. Claude is a planner only: tools disabled, and the reply is not executed. Issue and pull-request drafts are copied into the home and are not sent. `contributions pushed` stays at 0 until an explicit send.
 
-A bare `idlehand:` URL works too, which is what a desktop handler passes. On Linux, `idlehand init` registers an `x-scheme-handler/idlehand` handler when the XDG directories can be written. A `list` URL is fetched from the host in the link. Redirects are not followed. One bad repository URL does not drop the others. `idlehand analytics` shows whether each URL was accepted or refused, and why.
+The rest of the operation is in [docs/usage.md](docs/usage.md): spending limit, rules, the source list and `idlehand:` links, peers and the publish document, sandbox order, Radicle delegation and the contributor path, and GitHub.
 
-A list file is one repository URL per line (`#` starts a comment), or JSON: `{"repos": ["https://github.com/org/name"]}`.
-
-**Peers add peers.** This path does not add repos.
-
-```bash
-idlehand peer add 'https://peer.example/idlehand/publish'
-idlehand peer list
-```
-
-The node publishes its own peer list and repo list at `/idlehand/publish`. It fetches that document from peers you already have. A second-degree peer is added only when the heuristic says so:
-
-- `min_endorsements` (1): distinct direct peers that must list them
-- `max_new_peers_per_cycle` (5)
-- `max_peers` (50)
-- `require_https` (true)
-- `allow_insecure_loopback` (true): `http` is allowed only for `localhost`, `127.0.0.1`, and `::1`
-- `allowed_hosts` (empty): if you set it, the host must be listed
-- `blocked_hosts` (empty)
-
-Second-degree `file:` URLs are ignored. URLs with a username or password are rejected. Repo lists found on peers are counted and left out of `sources.toml`. The same analytics view shows why a second-degree peer was accepted or refused. The knobs are in `config.toml` under `peer_heuristic`. There is no plugin system.
-
-The listen port is bound to loopback until you change `publish.host`. The admin page stays on that same listener, at `/idlehand/admin`, and it still refuses a client that is not loopback.
-
-## Radicle
-
-Management is separate from the contribution loop, and nothing is delegated automatically. IdleHand delegates a repository by its RID, and only when `rad inspect --identity` shows that the local Radicle identity is a delegate. Issues and patch text go through `rad` on the trusted side.
-
-```bash
-idlehand rad status
-idlehand rad delegate rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
-idlehand rad revoke rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
-idlehand rad delegated
-idlehand rad issue create rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --title "Broken link" --body "The README link 404s."
-idlehand rad issue update rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 e4255cc2a0a65b543c2b5badac14bf9e0d9f409f --body "Still broken."
-idlehand rad issue send rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
-idlehand rad patch update rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2 --title "Fix the link" --body "Updates the README."
-idlehand rad patch send rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2
-```
-
-A contributor node lists the repository and does not have to delegate it. `rad issue open` creates the issue locally. `rad patch open` runs `git push rad HEAD:refs/patches` on the trusted side, and only for that listed RID or a delegated one. IdleHand records the issue, the patch, or a review only after `rad sync` reports that another node received the repository.
-
-```bash
-idlehand rad issue create rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --title "Broken link" --body "The README link 404s."
-idlehand rad patch open rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --path /path/to/checkout --title "Fix the link" --body "Updates the README."
-```
-
-The host delegates the RID, checks the patch out, and runs the sandbox test. That check runs the repository's own tests, the same ones pytest runs, including a `tests` directory with no `__init__.py`. A check that ran tests and passed accepts the patch. A check that ran tests and failed refuses it. IdleHand records that verdict only after `rad sync` replicates it. If `rad` is missing, the node is stopped, the sync reaches no other node, the sandbox does not run, or the check discovers no tests, IdleHand does not accept the patch and does not refuse it.
-
-```bash
-idlehand rad patch check rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 89f7afb1511b976482b21f6b2f39aef7f4fb88a2 --path /path/to/checkout
-```
-
-`rad patch edit` changes the title and description of a patch that already exists. If `rad` does not confirm a result, the command says so and stops.
-
-`rad` keys stay in the Radicle home. They are not copied into the sandbox, the publish feed, or analytics.
-
-## GitHub interop
-
-GitHub is optional. IdleHand uses the `gh` login already on the machine. It does not store a token, and it does not require `gh` for init, configure, or the contribution loop.
-
-```bash
-idlehand github status
-idlehand github repos
-idlehand github delegate octocat/hello
-idlehand github revoke octocat/hello
-idlehand github delegated
-idlehand github issue create octocat/hello --title "Broken link" --body "The README link 404s."
-idlehand github pr create octocat/hello --title "Fix the link" --body "Updates the README." --head fix-link
-```
-
-`github repos` lists repositories that login owns or administers and does not delegate them. Issues and pull requests run `gh` only for a delegated `owner/name`. `pr create` opens a pull request for a branch already on GitHub. It does not push. If `gh` is missing, not logged in, or does not confirm the result, the command says so and stops.
-
-## Sandbox
-
-Repository commands run in a container when Docker or Podman is installed. Otherwise IdleHand uses a Linux namespace jail: a private copy of the command and its libraries, the workspace mounted at `/work`, no route outside the jail, and a cleared environment. Loopback inside the jail is up so a test can bind `127.0.0.1`; that address is not the host. Home, credentials, and the rest of the host filesystem are not mounted. The test command runs the repository's tests. A run that discovers none is not a pass. If no runtime can start, IdleHand refuses the command instead of running it on the host.
-
-The contribution loop clones one repository from the local source list, then runs the action in that sandbox. The clone itself stays outside the sandbox: public http(s) URLs, or a local path the source list already names. SSH URLs and URLs with embedded credentials are refused. Subscription CLIs stay outside the sandbox. Their credentials are not copied into it.
-
-```bash
-idlehand sandbox spec
-idlehand sandbox run
-```
-
-`sandbox run` executes a local probe. It does not clone a repository and it is not a contribution.
-
-## What this slice does
-
-Real:
-
-- local CLI and a node process that stays up
-- config for the subscription, source list, rules, spending limit, and peers
-- one clone per cycle from the local source list, then test, audit, issue, and pull request commands in the sandbox
-- a contribution recorded only after that sandboxed command has run
-- a 10,000 token limit that stops the loop before the next cycle's estimate would pass it
-- Claude usage metered when that CLI reports it, otherwise a labeled local estimate
-- `idlehand analytics`
-- the loop starting after you configure a subscription CLI and start the node
-- `idlehand:` links, including a direct fetch of a publisher list file
-- Linux protocol-handler registration
-- peer publish endpoint, direct fetch, and the peers-of-peers heuristic
-- container command line, and the namespace jail when Docker and Podman are absent
-- explicit Radicle delegation by RID, with issues and patch edits through the local `rad` CLI
-- optional GitHub delegation through the `gh` login already on the machine
-
-Not done in this slice:
-
-- Codex and Cursor are not invoked. Claude is invoked only as a planner with tools disabled, and its reply is not executed.
-- The contribution loop copies issue and pull request drafts into the IdleHand home and does not send them. `contributions pushed` stays at 0. Sending a draft is explicit: `idlehand rad issue send` or `patch send` for a delegated RID, or `idlehand github issue send` or `pr send` for a delegated GitHub repository.
-- Forges other than the Radicle path and the optional GitHub interop.
-- Demo output is not a contribution.
+Two local nodes that track only this repository are in [docs/self-improvement.md](docs/self-improvement.md).
 
 ## Tests
 
