@@ -5,10 +5,17 @@ import { reposForUser } from './api.ts';
 import { Landing } from '../pages/Landing.tsx';
 import { Popular } from '../pages/Popular.tsx';
 import { Dashboard } from '../pages/Dashboard.tsx';
+import { SignIn } from '../pages/Message.tsx';
+import { safeNext } from '../session.ts';
 import { CliApprove } from '../pages/CliApprove.tsx';
 
 export function pageRoutes() {
   const r = new Hono<AppEnv>();
+
+  r.get('/login', (c) => {
+    const user = c.get('user');
+    return c.html(<SignIn next={safeNext(c.req.query('next'))} me={user ? userToMe(user) : null} />);
+  });
 
   r.get('/', (c) => {
     const { store } = c.get('deps');
@@ -24,9 +31,9 @@ export function pageRoutes() {
 
   r.get('/dashboard', async (c) => {
     const user = c.get('user');
-    if (!user) return c.redirect('/');
+    if (!user) return c.redirect(`/login?next=${encodeURIComponent(c.req.path + new URL(c.req.url).search)}`);
     const { store, config } = c.get('deps');
-    const page = Math.max(1, Number(c.req.query('page') ?? 1) || 1);
+    const page = Math.min(1000, Math.max(1, Math.floor(Number(c.req.query('page') ?? 1) || 1)));
     let mine: ReturnType<typeof repoRowToCard>[] = [];
     let reposError: string | null = null;
     try {
@@ -52,7 +59,7 @@ export function pageRoutes() {
   r.get('/cli/approve', (c) => {
     const user = c.get('user');
     const code = (c.req.query('code') ?? '').trim().toUpperCase();
-    if (!user) return c.redirect(`/auth/github?next=${encodeURIComponent(`/cli/approve?code=${code}`)}`);
+    if (!user) return c.redirect(`/login?next=${encodeURIComponent(`/cli/approve?code=${code}`)}`);
     const { store } = c.get('deps');
     const row = code ? store.getDeviceCodeByUserCode(code) : null;
     return c.html(<CliApprove me={userToMe(user)} userCode={code} status={row ? row.status : 'missing'} />);
@@ -60,11 +67,12 @@ export function pageRoutes() {
 
   r.post('/cli/approve', async (c) => {
     const user = c.get('user');
-    if (!user) return c.redirect('/');
-    const { store } = c.get('deps');
     const form = await c.req.parseBody();
     const code = String(form.userCode ?? '').trim().toUpperCase();
+    if (!user) return c.redirect(`/login?next=${encodeURIComponent(`/cli/approve?code=${code}`)}`);
+    const { store } = c.get('deps');
     const decision = String(form.decision ?? '');
+    if (decision !== 'approve' && decision !== 'deny') return c.text('Choose connect or deny.', 400);
     const row = code ? store.getDeviceCodeByUserCode(code) : null;
     if (!row || row.status !== 'pending') {
       return c.html(<CliApprove me={userToMe(user)} userCode={code} status={row ? row.status : 'missing'} />, 400);

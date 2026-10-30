@@ -95,6 +95,6 @@ export async function readStateCookie(c: Context, opts: SessionOpts): Promise<{ 
 /** Only allow relative, same-site redirects. */
 export function safeNext(next: string | undefined | null, fallback = '/dashboard'): string {
   if (!next) return fallback;
-  if (!next.startsWith('/') || next.startsWith('//')) return fallback;
+  if (!next.startsWith('/') || next.startsWith('//') || /[\\\u0000-\u0020\u007f]/.test(next)) return fallback;
   return next;
 }

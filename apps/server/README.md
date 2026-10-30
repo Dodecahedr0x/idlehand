@@ -28,9 +28,23 @@ bun test apps/server
 
 ## Endpoints
 
-- Pages: `/`, `/dashboard`, `/popular`, `/cli/approve?code=…`, `/logout`
+- Pages: `/`, `/login`, `/dashboard`, `/popular`, `/cli/approve?code=…`, `/logout`
 - Auth: `/auth/github`, `/auth/github/callback`, `/auth/dev` (dev only)
 - Browser API (cookie + `X-Requested-With: fetch` on mutations): `/api/me`, `/api/me/repos?page=`, `/api/selections` (GET/POST/DELETE `/:owner/:name`), `/api/repos/popular`, `/api/repos/search?q=`
 - CLI device login: `POST /api/cli/codes`, `GET /api/cli/codes/:deviceCode`
 - CLI API (`Authorization: Bearer <token>`): `/api/cli/me`, `/api/cli/repos`, `/api/cli/runs` (GET/POST)
 - `/healthz`
+
+## Web UX checks
+
+`bun test apps/server` covers the OAuth callback, cancellation and retry destinations,
+CLI confirmation after session expiry, and invalid or expired codes. For a browser
+smoke check, use the dev login above, then include a repository from Your repos and
+confirm that Included repos, its count, and both buttons update without a reload.
+Remove it from Included repos, search for it again, and check the empty state and
+keyboard focus. Check the same flows at a 375px viewport. Failed requests should
+leave the saved selection intact and display a recovery message in the page.
+
+GitHub OAuth still requires your own configured OAuth app for a live sign-in test.
+The default sign-in scope remains `read:user`; the web app does not change the
+local CLI's GitHub permissions.

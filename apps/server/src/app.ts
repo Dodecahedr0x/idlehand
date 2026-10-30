@@ -1,10 +1,12 @@
+import { html } from 'hono/html';
 import { Hono } from 'hono';
 import type { ServerConfig } from './config.ts';
 import type { Store, UserRow } from './db.ts';
 import type { GitHubClient } from './github.ts';
 import { readSessionUserId, type SessionOpts } from './session.ts';
-import { authRoutes } from './routes/auth.ts';
+import { authRoutes } from './routes/auth.tsx';
 import { apiRoutes } from './routes/api.ts';
+import { Message } from './pages/Message.tsx';
 import { pageRoutes } from './routes/pages.tsx';
 
 export interface AppDeps {
@@ -30,6 +32,7 @@ export function createApp(deps: AppDeps) {
     c.set('session', session);
     const uid = await readSessionUserId(c, session);
     c.set('user', uid == null ? null : deps.store.getUser(uid));
+    c.header('Cache-Control', 'no-store');
     await next();
   });
 
@@ -38,11 +41,11 @@ export function createApp(deps: AppDeps) {
   app.route('/', apiRoutes());
   app.route('/', pageRoutes());
 
-  app.notFound((c) => (c.req.path.startsWith('/api/') ? c.json({ error: 'not found' }, 404) : c.text('Not found', 404)));
+  app.notFound((c) => (c.req.path.startsWith('/api/') ? c.json({ error: 'not found' }, 404) : c.html(html`${Message({ title: 'This page wandered off.', description: 'The link may have changed. Head back home or explore a project to support.' })}`, 404)));
   app.onError((err, c) => {
     console.error(err);
     const msg = err instanceof Error ? err.message : 'internal error';
-    return c.req.path.startsWith('/api/') ? c.json({ error: msg }, 500) : c.text(`Error: ${msg}`, 500);
+    return c.req.path.startsWith('/api/') ? c.json({ error: msg }, 500) : c.html(html`${Message({ title: 'Something interrupted that.', description: 'We couldn’t load this page. Please try again in a moment.' })}`, 500);
   });
   return app;
 }
