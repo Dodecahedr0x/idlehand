@@ -4,7 +4,7 @@ import { createApp } from './app.ts';
 import { Store, type RepoInput } from './db.ts';
 import type { GitHubClient, GitHubUser } from './github.ts';
 import type { ServerConfig } from './config.ts';
-import { signValue, SESSION_COOKIE } from './session.ts';
+import { safeNext, signValue, SESSION_COOKIE, STATE_COOKIE } from './session.ts';
 
 const config: ServerConfig = {
   port: 0,
@@ -197,7 +197,7 @@ describe('CLI device flow + bearer API', () => {
     // anonymous approve page redirects to login
     res = await app.request(`http://localhost/cli/approve?code=${start.userCode}`, { redirect: 'manual' });
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toContain('/auth/github?next=');
+    expect(res.headers.get('location')).toContain('/login?next=');
 
     // approve with the form
     const form = new URLSearchParams({ userCode: start.userCode.toLowerCase(), decision: 'approve' });
@@ -207,7 +207,7 @@ describe('CLI device flow + bearer API', () => {
       body: form.toString(),
     });
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('Go back to your terminal');
+    expect(await res.text()).toContain('Return to your terminal');
 
     res = await req(`/api/cli/codes/${start.deviceCode}`);
     const poll = (await res.json()) as DeviceCodePoll;
@@ -257,7 +257,7 @@ describe('CLI device flow + bearer API', () => {
     res = await req('/dashboard', { cookie: alice });
     const html = await res.text();
     expect(html).toContain('acme/rocket');
-    expect(html).toContain('reviewed');
+    expect(html).toContain('Reviewed');
   });
 
   test('denied code', async () => {
@@ -288,9 +288,88 @@ describe('pages', () => {
     const alice = await cookieFor(1);
     await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'other', name: 'lib' } });
     const html = await (await req('/')).text();
+    expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
     expect(html).toContain('Sign in with GitHub');
     expect(html).toContain('other/lib');
     const popular = await (await req('/popular', { cookie: alice })).text();
     expect(popular).toContain('Included ✓');
+  });
+});
+
+
+describe('sign-in recovery', () => {
+  async function start(next = '/cli/approve?code=ABCD-EFGH') {
+    const res = await req(`/auth/github?next=${encodeURIComponent(next)}`);
+    const state = new URL(res.headers.get('location')!).searchParams.get('state')!;
+    const cookie = res.headers.getSetCookie().find((c) => c.startsWith(STATE_COOKIE))!.split(';')[0]!;
+    return { state, cookie, next };
+  }
+
+  test('OAuth round trip preserves the CLI code and clears the state cookie', async () => {
+    const flow = await start();
+    const res = await req(`/auth/github/callback?code=alice&state=${flow.state}`, { cookie: flow.cookie });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(flow.next);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=`))).toBe(true);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith(`${STATE_COOKIE}=`) && c.includes('Max-Age=0'))).toBe(true);
+  });
+
+  test('cancelled and failed sign-ins keep a safe retry destination', async () => {
+    for (const suffix of ['error=access_denied', 'code=unknown', '']) {
+      const flow = await start();
+      const res = await req(`/auth/github/callback?state=${flow.state}&${suffix}`, { cookie: flow.cookie });
+      expect([400, 502]).toContain(res.status);
+      const html = await res.text();
+      expect(html).toContain(`/login?next=${encodeURIComponent(flow.next)}`);
+      expect(html).toContain('Try sign-in again');
+      expect(html).not.toContain('bad token');
+      expect(res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
+    }
+  });
+
+  test('invalid state never signs in or trusts its next destination', async () => {
+    const flow = await start();
+    const res = await req('/auth/github/callback?code=alice&state=wrong', { cookie: flow.cookie });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('another browser session');
+    expect(res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
+  });
+
+  test('unconfigured OAuth has a useful recovery page', async () => {
+    const unconfigured = createApp({ config: { ...config, githubClientSecret: '' }, store, github: new FakeGitHub() });
+    const res = await unconfigured.request('http://localhost/auth/github');
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain('Explore repositories');
+  });
+
+  test('redirects stay on this site, including browser-normalized backslashes', async () => {
+    for (const value of ['https://example.com', '//example.com', '/\\example.com', '/ /example.com', '/\n/example.com', '']) {
+      expect(safeNext(value)).toBe('/dashboard');
+    }
+    expect(safeNext('/dashboard?page=2#your-repos')).toBe('/dashboard?page=2#your-repos');
+    const res = await req('/dashboard?page=2');
+    expect(res.headers.get('location')).toBe('/login?next=%2Fdashboard%3Fpage%3D2');
+    const html = await (await req('/login?next=%2Fcli%2Fapprove%3Fcode%3DABCD-EFGH')).text();
+    expect(html).toContain('After sign-in');
+    expect(html).toContain('/auth/github?next=%2Fcli%2Fapprove%3Fcode%3DABCD-EFGH');
+  });
+
+  test('session expiry during CLI confirmation preserves the code without approving it', async () => {
+    const start = store.createDeviceCode(60000);
+    const res = await req('/cli/approve', { method: 'POST', body: new URLSearchParams({ userCode: start.user_code, decision: 'approve' }) });
+    expect(res.headers.get('location')).toBe(`/login?next=${encodeURIComponent(`/cli/approve?code=${start.user_code}`)}`);
+    expect(store.getDeviceCode(start.device_code)?.status).toBe('pending');
+    const invalid = await req('/cli/approve', { method: 'POST', cookie: await cookieFor(1), body: new URLSearchParams({ userCode: start.user_code, decision: 'unknown' }) });
+    expect(invalid.status).toBe(400);
+    expect(store.getDeviceCode(start.device_code)?.status).toBe('pending');
+  });
+
+  test('CLI code entry and expired-code recovery are available', async () => {
+    const cookie = await cookieFor(1);
+    const entry = await (await req('/cli/approve', { cookie })).text();
+    expect(entry).toContain('Terminal code');
+    const code = store.createDeviceCode(-1000);
+    const expired = await (await req(`/cli/approve?code=${code.user_code}`, { cookie })).text();
+    expect(expired).toContain('This code has expired.');
   });
 });
