@@ -5,6 +5,7 @@ import { reposForUser } from './api.ts';
 import { Landing } from '../pages/Landing.tsx';
 import { Popular } from '../pages/Popular.tsx';
 import { Dashboard } from '../pages/Dashboard.tsx';
+import { Install } from '../pages/Install.tsx';
 import { SignIn } from '../pages/Message.tsx';
 import { safeNext } from '../session.ts';
 import { CliApprove } from '../pages/CliApprove.tsx';
@@ -29,6 +30,11 @@ export function pageRoutes() {
     return c.html(<Popular me={user ? userToMe(user) : null} popular={store.listPopular(200, user?.id ?? null)} />);
   });
 
+  r.get('/install', (c) => {
+    const user = c.get('user');
+    return c.html(<Install me={user ? userToMe(user) : null} />);
+  });
+
   r.get('/dashboard', async (c) => {
     const user = c.get('user');
     if (!user) return c.redirect(`/login?next=${encodeURIComponent(c.req.path + new URL(c.req.url).search)}`);
@@ -46,6 +52,7 @@ export function pageRoutes() {
       <Dashboard
         me={userToMe(user)}
         baseUrl={config.baseUrl}
+        {...store.getSetupStatus(user.id)}
         selected={store.listSelections(user.id)}
         mine={mine}
         page={page}

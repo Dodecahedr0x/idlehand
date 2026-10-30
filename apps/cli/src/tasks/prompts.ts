@@ -10,6 +10,7 @@ const CONTRACT = `
 - Non-interactive only: never start servers, watchers, or prompts that wait for input. Add timeouts to anything that could hang.
 - Do not access the network except to install the project's declared dependencies.
 - Do not modify or delete files outside this checkout.
+- The runner independently verifies commands in an offline OS sandbox, without personal credentials or home-directory access. Include self-contained \`reproduction.setup\` commands to recreate every needed scratch file and fixture on a fresh checkout. The runner never copies your scratch files. Verification setup cannot download dependencies; commands needing unavailable dependencies cannot be verified.
 - When unsure, say so in the notes rather than guessing.
 - Your FINAL message must be only the JSON object matching the required schema.`.trim();
 
@@ -29,7 +30,7 @@ ${repoBlock(repo, defaultBranch)}
 3. For EACH suspected bug, write a minimal reproduction: a single shell command run from the repo root (a one-off test file, a script invoking the module, a CLI call) that fails in a distinctive way. RUN IT. Capture the last lines of output. If you cannot make it fail, it is not a finding.
 4. Check your finding is not already reported. Existing open issues:
 ${existing}
-5. Tidy up: delete any scratch files you created unless the reproduction command needs them (then keep them small and mention them in the body).
+5. Tidy up scratch files. If your reproduction needs a new test or script, encode its complete contents in self-contained \`reproduction.setup\` commands, so it can be recreated on a clean checkout without copying any files from this one.
 
 ## Output
 Return JSON with \`findings\` (0 to ${maxFindings} items; zero is a perfectly good answer) and \`notes\`. For each finding, \`expect\` must describe what the runner should see when it runs your command on a clean checkout: typically \`exitCode: "nonzero"\` plus a distinctive \`outputIncludes\` string copied from the output you saw.
@@ -57,7 +58,7 @@ ${issue.body?.trim() || '(no description)'}
 5. Clean up scratch files that are not part of the fix.
 
 ## Output
-Return JSON. \`reproduction.command\` is the command from step 2. \`expectBefore\` describes its behaviour on the unfixed code (typically nonzero exit + a distinctive output substring). \`expectAfter\` describes it on your fixed code (typically zero exit). \`testCommand\` is the exact test command you ran. The runner will: run \`expectBefore\` on ${defaultBranch}, run \`expectAfter\` and \`testCommand\` on your branch, and only then open a PR. If any of those disagree with you, no PR is opened.
+Return JSON. \`reproduction.command\` is the command from step 2. Use self-contained \`reproduction.setup\` commands to recreate any reproduction harness on the clean default branch as well as the fix checkout; it must not depend on your untracked files being copied. \`expectBefore\` describes its behaviour on the unfixed code (typically nonzero exit + a distinctive output substring). \`expectAfter\` describes it on your fixed code (typically zero exit). \`testCommand\` is the exact test command you ran. The runner will: run \`expectBefore\` on ${defaultBranch}, run \`expectAfter\` and \`testCommand\` on your branch, and only then open a PR. If any of those disagree with you, no PR is opened.
 
 ${CONTRACT}`;
 }

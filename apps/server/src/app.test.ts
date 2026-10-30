@@ -252,12 +252,19 @@ describe('CLI device flow + bearer API', () => {
     expect(((await res.json()) as StoredRunReport[]).map((r) => r.id)).toEqual([stored.id]);
 
     expect((await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, kind: 'dance' } })).status).toBe(400);
+    expect((await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, costUnknown: 'true' } })).status).toBe(400);
+    res = await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, costUnknown: true, costUsd: 0, costEstimated: true } });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ costUsd: 0, costUnknown: true });
+    res = await req('/api/cli/runs', { bearer: poll.token });
+    expect((await res.json() as StoredRunReport[]).some((r) => r.costUnknown === true)).toBe(true);
 
     // reports show up on the dashboard under the repo
     res = await req('/dashboard', { cookie: alice });
     const html = await res.text();
     expect(html).toContain('acme/rocket');
     expect(html).toContain('Reviewed');
+    expect(html).toContain('unknown (reported ≈$0.00)');
   });
 
   test('denied code', async () => {
@@ -293,6 +300,73 @@ describe('pages', () => {
     expect(html).toContain('other/lib');
     const popular = await (await req('/popular', { cookie: alice })).text();
     expect(popular).toContain('Included ✓');
+  });
+});
+
+describe('first contribution setup', () => {
+  test('installation is available before sign-in and dashboard provides runnable first steps', async () => {
+    const install = await req('/install');
+    expect(install.status).toBe(200);
+    const guide = await install.text();
+    expect(guide).toContain('git clone https://github.com/Dodecahedr0x/idlehand.git');
+    expect(guide).toContain('bun run --cwd apps/cli build');
+    expect(guide).toContain('apps/cli/dist/idlehand');
+    expect(guide).toContain('gh auth login');
+    expect(guide).toContain('shell profile');
+    expect(await (await req('/')).text()).toContain('href="/install"');
+    const dashboard = await (await req('/dashboard', { cookie: await cookieFor(1) })).text();
+    expect(dashboard).toContain('href="/install"');
+    expect(dashboard).toContain('idlehand login --server http://localhost:8787');
+    expect(dashboard).toContain('idlehand doctor');
+    expect(dashboard).toContain("idlehand run --provider codex --budget &#39;1 task&#39; --once");
+    expect(dashboard).toContain('no dollar cap');
+    expect(dashboard).toContain('CLI not connected yet');
+  });
+
+  test('connection requires actual token use and never leaks another account or stale approval', async () => {
+    const alice = await cookieFor(1);
+    const dashboard = async () => (await req('/dashboard', { cookie: alice })).text();
+    const pending = store.createDeviceCode(60000);
+    expect(await dashboard()).toContain('CLI not connected yet');
+    const token = store.approveDeviceCode(pending.device_code, 1, 'test');
+    expect(await dashboard()).toContain('CLI not connected yet');
+    await req('/api/cli/me', { bearer: token });
+    expect(await dashboard()).toContain('CLI connected');
+    expect(await (await req('/dashboard', { cookie: await cookieFor(2) })).text()).toContain('CLI not connected yet');
+
+    store.db.query('DELETE FROM cli_tokens WHERE token = ?').run(token);
+    expect((await req('/api/cli/me', { bearer: token })).status).toBe(401);
+    expect(await dashboard()).toContain('CLI not connected yet');
+    const expired = store.createDeviceCode(-1000);
+    expect(store.getDeviceCode(expired.device_code)?.status).toBe('expired');
+    const denied = store.createDeviceCode(60000);
+    store.denyDeviceCode(denied.device_code);
+    expect(await dashboard()).toContain('CLI not connected yet');
+  });
+
+  test('task failures and empty results are distinguished from a completed contribution', async () => {
+    const alice = await cookieFor(1);
+    const dashboard = async () => (await req('/dashboard', { cookie: alice })).text();
+    const report: RunReport = {
+      repo: { owner: 'acme', name: 'rocket', fullName: 'acme/rocket' },
+      kind: 'fix-issue', provider: 'claude', outcome: 'failed', url: null,
+      summary: 'A result', costUsd: 0.1, costEstimated: false, durationMs: 100,
+      startedAt: '2026-10-30T10:00:00.000Z',
+    };
+    store.addRunReport(2, { ...report, outcome: 'pr-opened' });
+    expect(await dashboard()).not.toContain('First contribution completed');
+    store.addRunReport(1, report);
+    expect(await dashboard()).toContain('Your last task failed');
+    expect(await dashboard()).not.toContain('First contribution completed');
+    store.addRunReport(1, { ...report, outcome: 'unverified' });
+    expect(await dashboard()).toContain('Your last result could not be verified');
+    store.addRunReport(1, { ...report, outcome: 'nothing-found' });
+    expect(await dashboard()).toContain('First check completed');
+    expect(await dashboard()).not.toContain('First contribution completed');
+    store.addRunReport(1, { ...report, outcome: 'pr-opened' });
+    expect(await dashboard()).toContain('First contribution completed');
+    store.addRunReport(1, report);
+    expect(await dashboard()).toContain('First contribution completed');
   });
 });
 

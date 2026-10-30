@@ -81,8 +81,13 @@ export async function diffStat(dir: string, base: string): Promise<string> {
   return (await git(['diff', '--stat', base], dir)).trim();
 }
 
-export async function commitAll(dir: string, message: string): Promise<string> {
+/** Include new source and tests; Git's ignore rules exclude generated artifacts. */
+export async function stageChanges(dir: string): Promise<void> {
   await git(['add', '-A'], dir);
+}
+
+export async function commitAll(dir: string, message: string): Promise<string> {
+  await stageChanges(dir);
   await git(['-c', 'user.name=idlehand', '-c', 'user.email=idlehand@users.noreply.github.com', 'commit', '--quiet', '-m', message], dir);
   return headSha(dir);
 }

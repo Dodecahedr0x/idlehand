@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
-import { formatBudget, usdCap, type Budget, type BudgetUsage } from '@idlehand/shared';
+import { formatBudget, formatCost, usdCap, type Budget, type BudgetUsage } from '@idlehand/shared';
 import type { Scheduler, SchedulerEvent } from '../scheduler.ts';
 import type { Candidate, TaskResult } from '../tasks/common.ts';
 
@@ -70,11 +70,13 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onRea
   });
 
   const cap = usdCap(budget, subscriptionUsd);
-  const spentStr = `${estimated ? '≈' : ''}$${usage.spentUsd.toFixed(2)}`;
+  const spentStr = formatCost(usage.spentUsd, estimated, usage.costUnknown);
   const elapsedMs = done ? usage.elapsedMs : Math.max(usage.elapsedMs, now - startedAt);
   const barWidth = 28;
   let bar = '';
-  if (cap != null) {
+  if (usage.costUnknown) {
+    bar = 'spending unknown; accounting incomplete';
+  } else if (cap != null) {
     const frac = Math.min(1, usage.spentUsd / cap);
     const filled = Math.round(frac * barWidth);
     bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
@@ -145,7 +147,7 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onRea
             {r.status === 'done' && r.result && (
               <Box marginLeft={1}>
                 <Text color={OUTCOME_COLOR[r.result.outcome] ?? 'gray'}>{r.result.outcome}</Text>
-                <Text dimColor> {r.result.costEstimated ? '≈' : ''}${r.result.costUsd.toFixed(2)}</Text>
+                <Text dimColor> {formatCost(r.result.costUsd, r.result.costEstimated, r.result.costUnknown)}</Text>
               </Box>
             )}
           </Box>

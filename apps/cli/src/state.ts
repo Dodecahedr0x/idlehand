@@ -4,6 +4,10 @@ import { dirname } from 'node:path';
 import type { Provider, TaskKind, TaskOutcome } from '@idlehand/shared';
 import { STATE_PATH } from './paths.ts';
 
+// ponytail: bounded retries across runs; expose policy settings if projects need different limits.
+export const MAX_TASK_ATTEMPTS = 3;
+export const TASK_RETRY_DELAY_MS = 15 * 60_000;
+
 export interface TaskRow {
   id: number;
   repo: string;
@@ -15,6 +19,7 @@ export interface TaskRow {
   summary: string | null;
   cost_usd: number;
   cost_estimated: number;
+  cost_unknown: number;
   duration_ms: number;
   started_at: string;
   finished_at: string | null;
@@ -38,6 +43,7 @@ export class State {
         summary TEXT,
         cost_usd REAL NOT NULL DEFAULT 0,
         cost_estimated INTEGER NOT NULL DEFAULT 0,
+        cost_unknown INTEGER NOT NULL DEFAULT 0,
         duration_ms INTEGER NOT NULL DEFAULT 0,
         started_at TEXT NOT NULL,
         finished_at TEXT
@@ -49,6 +55,9 @@ export class State {
         sha TEXT NOT NULL
       );
     `);
+    if (!(this.db.query('PRAGMA table_info(tasks)').all() as { name: string }[]).some((c) => c.name === 'cost_unknown')) {
+      this.db.exec('ALTER TABLE tasks ADD COLUMN cost_unknown INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   startTask(t: { repo: string; kind: TaskKind; target: string; provider: Provider }): number {
@@ -60,23 +69,28 @@ export class State {
     return r.id;
   }
 
-  finishTask(id: number, r: { outcome: TaskOutcome; url: string | null; summary: string; costUsd: number; costEstimated: boolean; durationMs: number }) {
+  finishTask(id: number, r: { outcome: TaskOutcome; url: string | null; summary: string; costUsd: number; costEstimated: boolean; costUnknown?: boolean; durationMs: number }) {
     this.db
       .query(
-        `UPDATE tasks SET outcome=?, url=?, summary=?, cost_usd=?, cost_estimated=?, duration_ms=?, finished_at=? WHERE id=?`,
+        `UPDATE tasks SET outcome=?, url=?, summary=?, cost_usd=?, cost_estimated=?, cost_unknown=?, duration_ms=?, finished_at=? WHERE id=?`,
       )
-      .run(r.outcome, r.url, r.summary.slice(0, 4000), r.costUsd, r.costEstimated ? 1 : 0, r.durationMs, new Date().toISOString(), id);
+      .run(r.outcome, r.url, r.summary.slice(0, 4000), r.costUsd, r.costEstimated ? 1 : 0, r.costUnknown ? 1 : 0, r.durationMs, new Date().toISOString(), id);
   }
 
-  /** Has this exact target already been handled (any terminal outcome, or currently running)? */
-  seen(repo: string, kind: TaskKind, target: string): boolean {
-    const r = this.db.query(`SELECT 1 FROM tasks WHERE repo=? AND kind=? AND target=? LIMIT 1`).get(repo, kind, target);
-    return !!r;
+  /** Completed work stays handled. Tool/agent failures get bounded retries after a cooldown. */
+  seen(repo: string, kind: TaskKind, target: string, now = new Date()): boolean {
+    const rows = this.db.query(`SELECT outcome, finished_at FROM tasks WHERE repo=? AND kind=? AND target=? ORDER BY id DESC`)
+      .all(repo, kind, target) as Pick<TaskRow, 'outcome' | 'finished_at'>[];
+    if (!rows.length) return false;
+    if (rows.some((r) => r.outcome !== 'failed')) return true;
+    if (rows.length >= MAX_TASK_ATTEMPTS) return true;
+    const finishedAt = Date.parse(rows[0]!.finished_at ?? '');
+    return !Number.isFinite(finishedAt) || now.getTime() - finishedAt < TASK_RETRY_DELAY_MS;
   }
 
   /** Mark stale 'running' rows (from a crashed run) as failed. */
   reapRunning(): number {
-    const r = this.db.query(`UPDATE tasks SET outcome='failed', finished_at=? WHERE outcome='running'`).run(new Date().toISOString());
+    const r = this.db.query(`UPDATE tasks SET outcome='failed', cost_unknown=1, cost_estimated=1, finished_at=? WHERE outcome='running'`).run(new Date().toISOString());
     return r.changes;
   }
 
@@ -95,11 +109,11 @@ export class State {
   }
 
   /** Spend + task counts since an ISO timestamp. */
-  totals(sinceIso: string): { spentUsd: number; tasks: number; estimated: boolean } {
+  totals(sinceIso: string): { spentUsd: number; tasks: number; estimated: boolean; costUnknown: boolean } {
     const r = this.db
-      .query(`SELECT COALESCE(SUM(cost_usd),0) AS spent, COUNT(*) AS n, MAX(cost_estimated) AS est FROM tasks WHERE started_at >= ? AND outcome != 'running'`)
-      .get(sinceIso) as { spent: number; n: number; est: number | null };
-    return { spentUsd: r.spent, tasks: r.n, estimated: !!r.est };
+      .query(`SELECT COALESCE(SUM(cost_usd),0) AS spent, COUNT(*) AS n, MAX(cost_estimated) AS est, MAX(cost_unknown) AS unknown_cost FROM tasks WHERE started_at >= ? AND outcome != 'running'`)
+      .get(sinceIso) as { spent: number; n: number; est: number | null; unknown_cost: number | null };
+    return { spentUsd: r.spent, tasks: r.n, estimated: !!r.est, costUnknown: !!r.unknown_cost };
   }
 
   close() {

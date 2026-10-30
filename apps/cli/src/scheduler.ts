@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { checkBudget, usdCap, type Budget, type BudgetUsage, type BudgetVerdict, type RunReport, type TaskKind } from '@idlehand/shared';
 import type { Config } from './config.ts';
 import { currentLogin, listOpenIssues, listOpenPrs, repoInfo, type IssueSummary, type PrSummary, type RepoInfo } from './gh.ts';
-import type { AgentProvider } from './providers/index.ts';
+import { providerBudgetError, type AgentProvider, type AgentRunResult } from './providers/index.ts';
 import type { State } from './state.ts';
 import { reviewPr } from './tasks/reviewPr.ts';
 import { fixIssue } from './tasks/fixIssue.ts';
@@ -65,7 +65,7 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
         if (pr.author.login === login) continue; // cannot review your own PR
         if (pr.reviews.some((r) => r.author?.login === login)) continue;
         if (pr.labels.some((l) => /no-idlehand|no-bots?/i.test(l.name))) continue;
-        if (state.seen(s.repo, 'review-pr', `pr:${pr.number}`)) continue;
+        if (state.seen(s.repo, 'review-pr', `pr:${pr.number}`, now)) continue;
         prs.push({ kind: 'review-pr', repo: s.repo, target: `pr:${pr.number}`, label: `review PR #${pr.number} · ${pr.title}`, pr });
       }
     }
@@ -85,7 +85,7 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
         if (cfg.policy.issueLabels.length && !labels.some((l) => cfg.policy.issueLabels.map((x) => x.toLowerCase()).includes(l))) continue;
         if (issue.assignees.length && !issue.assignees.some((a) => a.login === login)) continue; // someone else owns it
         if (new RegExp(`(^|\\D)#${issue.number}(\\D|$)|issue-${issue.number}(\\D|$)`).test(prBodies)) continue; // a PR already references it
-        if (state.seen(s.repo, 'fix-issue', `issue:${issue.number}`)) continue;
+        if (state.seen(s.repo, 'fix-issue', `issue:${issue.number}`, now)) continue;
         const score = (labels.some((l) => ISSUE_BOOST.includes(l)) ? 1000 : 0) - Date.parse(issue.createdAt) / 1e10;
         issues.push({ kind: 'fix-issue', repo: s.repo, target: `issue:${issue.number}`, label: `fix issue #${issue.number} · ${issue.title}`, issue, score });
       }
@@ -99,7 +99,9 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
       if (s.info.archived) continue;
       const last = state.lastCodebaseReview(s.repo);
       if (last && now.getTime() - Date.parse(last.reviewed_at) < cfg.policy.codebaseReviewIntervalHours * 3_600_000) continue;
-      out.push({ kind: 'review-codebase', repo: s.repo, target: `codebase:${now.toISOString().slice(0, 10)}`, label: `review codebase · ${s.repo}` });
+      const target = `codebase:${now.toISOString().slice(0, 10)}`;
+      if (state.seen(s.repo, 'review-codebase', target, now)) continue;
+      out.push({ kind: 'review-codebase', repo: s.repo, target, label: `review codebase · ${s.repo}` });
     }
   }
   return out;
@@ -143,6 +145,8 @@ export class Scheduler extends EventEmitter {
     const first = checkBudget(budget, usage, sub);
     this.emitEvent({ type: 'budget', usage, verdict: first });
     if (!first.ok) return finish(first.reason);
+    const unsupportedBudget = providerBudgetError(provider, usdCap(budget, sub));
+    if (!this.opts.dryRun && unsupportedBudget) return finish(unsupportedBudget);
 
     if (this.stopped) return finish('stopped by user');
     if (!this.opts.dryRun) {
@@ -176,14 +180,27 @@ export class Scheduler extends EventEmitter {
       this.emitEvent({ type: 'task-start', candidate: c, index: index++ });
       const taskId = state.startTask({ repo: c.repo, kind: c.kind, target: c.target, provider: provider.name });
       const log = (line: string) => this.emitEvent({ type: 'log', candidate: c, line });
-      const ctx = { repo: c.repo, info: infoByRepo.get(c.repo)!, login, cfg, provider, state, log, maxBudgetUsd: perTaskCap };
+      // Keep accounting even if verification or publishing throws after the agent ran.
+      const accounting: { run?: AgentRunResult } = {};
+      const trackedProvider: AgentProvider = {
+        name: provider.name,
+        supportsUsdBudget: provider.supportsUsdBudget,
+        check: () => provider.check(),
+        run: async (request) => { accounting.run = await provider.run(request); return accounting.run; },
+      };
+      const ctx = { repo: c.repo, info: infoByRepo.get(c.repo)!, login, cfg, provider: trackedProvider, state, log, maxBudgetUsd: perTaskCap };
       const started = new Date().toISOString();
       let result: TaskResult;
       try {
         result = c.kind === 'review-pr' ? await reviewPr(ctx, c.pr) : c.kind === 'fix-issue' ? await fixIssue(ctx, c.issue) : await reviewCodebase(ctx);
       } catch (e) {
-        result = { kind: c.kind, outcome: 'failed', url: null, summary: (e as Error).message, costUsd: 0, costEstimated: false, durationMs: 0, exhausted: false };
+        result = { kind: c.kind, outcome: 'failed', url: null, summary: (e as Error).message, costUsd: accounting.run?.costUsd ?? 0, costEstimated: accounting.run?.costEstimated ?? false, durationMs: Date.now() - Date.parse(started), exhausted: accounting.run?.exhausted ?? false };
         log(`error: ${(e as Error).message}`);
+      }
+      if (accounting.run?.costUnknown) {
+        result.costUnknown = true;
+        result.summary = `Provider spending is unknown; no further tasks will start. ${result.summary}`;
+        usage.costUnknown = true;
       }
       state.finishTask(taskId, result);
       usage.spentUsd += result.costUsd;
@@ -193,11 +210,12 @@ export class Scheduler extends EventEmitter {
       const [owner, name] = c.repo.split('/') as [string, string];
       const report: RunReport = {
         repo: { owner, name, fullName: c.repo }, kind: c.kind, provider: provider.name, outcome: result.outcome, url: result.url,
-        summary: result.summary, costUsd: result.costUsd, costEstimated: result.costEstimated, durationMs: result.durationMs, startedAt: started,
+        summary: result.summary, costUsd: result.costUsd, costEstimated: result.costEstimated, costUnknown: result.costUnknown, durationMs: result.durationMs, startedAt: started,
       };
       reports.push(report);
       this.emitEvent({ type: 'task-done', candidate: c, result, usage });
       if (this.opts.report) await this.opts.report(report).catch((e) => this.emitEvent({ type: 'info', message: `could not report to server: ${(e as Error).message}` }));
+      if (accounting.run?.costUnknown) return finish('provider cost unavailable; stopped to avoid untracked spending');
       if (this.stopped) return finish('stopped by user');
       if (this.opts.once) return finish('--once: stopped after one task');
     }

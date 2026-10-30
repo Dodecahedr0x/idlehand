@@ -3,7 +3,8 @@
  * re-run its reproduction command ourselves and only act when the observed
  * behaviour matches the claim. This is the anti-hallucination gate.
  */
-import { sh, tail } from './shell.ts';
+import { tail } from './shell.ts';
+import { sandboxedSh } from './sandbox.ts';
 
 export interface Expectation {
   exitCode: 'zero' | 'nonzero';
@@ -22,6 +23,8 @@ export interface Reproduction {
 
 export interface VerifyResult {
   ok: boolean;
+  /** Execution infrastructure failed, so a later attempt may succeed. */
+  infrastructureError?: boolean;
   /** Human-readable reason when not ok. */
   reason: string | null;
   exitCode: number;
@@ -30,15 +33,20 @@ export interface VerifyResult {
   durationMs: number;
 }
 
-const SAFE_ENV = { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', TERM: 'dumb' };
+function sandboxFailure(error: unknown): VerifyResult {
+  return { ok: false, infrastructureError: true, reason: (error as Error).message, exitCode: -1, timedOut: false, outputTail: '', durationMs: 0 };
+}
 
 export async function runSetup(setup: string[], cwd: string, timeoutMs: number, log?: (l: string) => void): Promise<VerifyResult | null> {
   for (const cmd of setup) {
     log?.(`setup: ${cmd}`);
-    const r = await sh(cmd, { cwd, timeoutMs, env: SAFE_ENV });
+    let r;
+    try { r = await sandboxedSh(cmd, cwd, timeoutMs); }
+    catch (error) { return sandboxFailure(error); }
     if (r.code !== 0 || r.timedOut) {
       return {
         ok: false,
+        infrastructureError: true,
         reason: r.timedOut ? `setup command timed out: ${cmd}` : `setup command failed (${r.code}): ${cmd}`,
         exitCode: r.code,
         timedOut: r.timedOut,
@@ -54,14 +62,16 @@ export async function verify(repro: Reproduction, expect: Expectation, cwd: stri
   const setupFail = await runSetup(repro.setup ?? [], cwd, timeoutMs, log);
   if (setupFail) return setupFail;
   log?.(`run: ${repro.command}`);
-  const r = await sh(repro.command, { cwd, timeoutMs, env: SAFE_ENV });
+  let r;
+  try { r = await sandboxedSh(repro.command, cwd, timeoutMs); }
+  catch (error) { return sandboxFailure(error); }
   const out = r.stdout + '\n' + r.stderr;
   return judge(expect, r.code, r.timedOut, out, r.durationMs);
 }
 
 export function judge(expect: Expectation, code: number, timedOut: boolean, out: string, durationMs = 0): VerifyResult {
   const base = { exitCode: code, timedOut, outputTail: tail(out), durationMs };
-  if (timedOut) return { ...base, ok: false, reason: 'command timed out' };
+  if (timedOut) return { ...base, ok: false, infrastructureError: true, reason: 'command timed out' };
   if (expect.exitCode === 'zero' && code !== 0) return { ...base, ok: false, reason: `expected exit 0, got ${code}` };
   if (expect.exitCode === 'nonzero' && code === 0) return { ...base, ok: false, reason: 'expected a non-zero exit, got 0' };
   const lower = out.toLowerCase();
@@ -74,7 +84,7 @@ export function judge(expect: Expectation, code: number, timedOut: boolean, out:
   return { ...base, ok: true, reason: null };
 }
 
-/** Reject reproduction commands that reach outside the checkout or are obviously destructive. */
+/** An early usability check only; sandboxedSh is the security boundary. */
 export function commandLooksSafe(command: string): string | null {
   const c = command.trim();
   if (!c) return 'empty command';

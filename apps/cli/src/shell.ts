@@ -11,6 +11,10 @@ export interface ExecResult {
 export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** Use only env rather than inheriting the runner's credentials and settings. */
+  inheritEnv?: boolean;
+  /** Kill this command's process group on exit/timeout; detached sessions can escape cleanup. */
+  killProcessGroup?: boolean;
   timeoutMs?: number;
   stdin?: string;
   /** Called with each chunk of combined output as it arrives. */
@@ -23,16 +27,21 @@ export async function exec(cmd: string[], opts: ExecOptions = {}): Promise<ExecR
   const started = Date.now();
   const proc = Bun.spawn(cmd, {
     cwd: opts.cwd,
-    env: { ...process.env, ...(opts.env ?? {}) } as Record<string, string>,
+    env: (opts.inheritEnv === false ? opts.env ?? {} : { ...process.env, ...(opts.env ?? {}) }) as Record<string, string>,
     stdin: opts.stdin != null ? new TextEncoder().encode(opts.stdin) : 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
+    detached: opts.killProcessGroup,
   });
+  const killGroup = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} };
+  // Close inherited pipes even when a shell exits while background children run.
+  if (opts.killProcessGroup) void proc.exited.then(killGroup);
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   if (opts.timeoutMs) {
     timer = setTimeout(() => {
       timedOut = true;
+      if (opts.killProcessGroup) { killGroup(); return; }
       try {
         proc.kill('SIGTERM');
         setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);

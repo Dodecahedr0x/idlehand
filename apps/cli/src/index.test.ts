@@ -158,6 +158,39 @@ test('dry run works without an agent, deduplicates repos, and leaves running tas
   expect(calls.some((line) => line.startsWith('git '))).toBe(false);
 });
 
+test('Codex monetary budgets fail before tool checks, while dry runs remain available', async () => {
+  const cfg = config();
+  cfg.provider = 'codex';
+  cfg.subscription.monthlyUsd = 200;
+  const f = fixture(cfg);
+  for (const cap of ['$0.01', '10%']) {
+    const result = await f.run('run', '--budget', cap, '--json');
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr).message).toContain('Codex cannot enforce');
+    expect(existsSync(f.calls)).toBe(false);
+  }
+  const preview = await f.run('run', '--dry-run', '--json');
+  expect(preview.code).toBe(0);
+  cfg.codex.bin = '/bin/echo';
+  saveConfig(cfg, join(f.home, 'config.json'));
+  const doctor = await f.run('doctor', '--json');
+  expect(doctor.code).toBe(1);
+  expect(JSON.parse(doctor.stdout).find((c: { name: string }) => c.name === 'budget')).toMatchObject({ ok: false, detail: expect.stringContaining('Codex cannot enforce') });
+});
+
+test('status identifies unknown historical spending in totals and task rows', async () => {
+  const f = fixture(config());
+  const state = new State(join(f.home, 'state.sqlite'));
+  const id = state.startTask({ repo: 'o/r', kind: 'fix-issue', target: 'issue:1', provider: 'claude' });
+  state.finishTask(id, { outcome: 'failed', url: null, summary: 'missing accounting', costUsd: 0, costEstimated: true, costUnknown: true, durationMs: 1 });
+  state.close();
+  const human = await f.run('status');
+  expect(human.code).toBe(0);
+  expect(human.stdout.match(/unknown \(reported ≈\$0\.00\)/g)).toHaveLength(2);
+  const json = await f.run('status', '--json');
+  expect(JSON.parse(json.stdout)).toMatchObject({ month: { spentUsd: 0, costUnknown: true }, recent: [{ cost_unknown: 1 }] });
+});
+
 test('Ctrl+C during discovery finishes with a structured stopped message and starts no tasks', async () => {
   const f = fixture(config());
   const proc = f.spawn(['run', '--dry-run', '--json'], { SLOW_SCAN: '1' });

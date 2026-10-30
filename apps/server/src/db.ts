@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import type { Me, PopularRepo, RepoCard, RunReport, SelectedRepo, StoredRunReport } from '@idlehand/shared';
+import type { Me, PopularRepo, RepoCard, RunReport, SelectedRepo, StoredRunReport, TaskOutcome } from '@idlehand/shared';
 
 export interface UserRow {
   id: number;
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS run_reports (
   summary TEXT NOT NULL,
   cost_usd REAL NOT NULL DEFAULT 0,
   cost_estimated INTEGER NOT NULL DEFAULT 0,
+  cost_unknown INTEGER NOT NULL DEFAULT 0,
   duration_ms INTEGER NOT NULL DEFAULT 0,
   started_at TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -151,6 +152,9 @@ export class Store {
     this.db = new Database(path, { create: true });
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.db.exec(SCHEMA);
+    if (!(this.db.query('PRAGMA table_info(run_reports)').all() as { name: string }[]).some((c) => c.name === 'cost_unknown')) {
+      this.db.exec('ALTER TABLE run_reports ADD COLUMN cost_unknown INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   close(): void {
@@ -319,13 +323,23 @@ export class Store {
     return this.getUser(row.user_id);
   }
 
+  getSetupStatus(userId: number): { cliConnected: boolean; contributionOutcome: TaskOutcome | null } {
+    // Approval alone does not confirm the CLI received and used its token.
+    const cliConnected = !!this.db.query('SELECT 1 FROM cli_tokens WHERE user_id = ? AND last_used_at IS NOT NULL LIMIT 1').get(userId);
+    const result = this.db.query<{ outcome: TaskOutcome }, [number]>(
+      `SELECT outcome FROM run_reports WHERE user_id = ?
+       ORDER BY CASE WHEN outcome IN ('reviewed', 'merged', 'pr-opened', 'issues-filed') THEN 0 ELSE 1 END, id DESC LIMIT 1`,
+    ).get(userId);
+    return { cliConnected, contributionOutcome: result?.outcome ?? null };
+  }
+
   /* ---- run reports ---- */
 
   addRunReport(userId: number, r: RunReport): StoredRunReport {
     const res = this.db
       .query(
-        `INSERT INTO run_reports (user_id, repo_full_name, kind, provider, outcome, url, summary, cost_usd, cost_estimated, duration_ms, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO run_reports (user_id, repo_full_name, kind, provider, outcome, url, summary, cost_usd, cost_estimated, cost_unknown, duration_ms, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         userId,
@@ -337,6 +351,7 @@ export class Store {
         r.summary,
         r.costUsd,
         r.costEstimated ? 1 : 0,
+        r.costUnknown ? 1 : 0,
         r.durationMs,
         r.startedAt,
       );
@@ -376,6 +391,7 @@ interface RunReportRow {
   summary: string;
   cost_usd: number;
   cost_estimated: number;
+  cost_unknown: number;
   duration_ms: number;
   started_at: string;
 }
@@ -395,6 +411,7 @@ function runReportRowToStored(r: RunReportRow): StoredRunReport {
     summary: r.summary,
     costUsd: r.cost_usd,
     costEstimated: !!r.cost_estimated,
+    costUnknown: !!r.cost_unknown,
     durationMs: r.duration_ms,
     startedAt: r.started_at,
   };

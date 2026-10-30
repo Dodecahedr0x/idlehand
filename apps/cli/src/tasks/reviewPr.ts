@@ -1,7 +1,6 @@
 import { ensureBase, fetchPrRef, makeWorktree } from '../workspace.ts';
 import { mergePr, postPrReview, prDetail, prDiff, type PrSummary } from '../gh.ts';
-import { commandLooksSafe, judge } from '../verify.ts';
-import { sh } from '../shell.ts';
+import { commandLooksSafe, verify } from '../verify.ts';
 import { REVIEW_PR_SCHEMA } from './schemas.ts';
 import { reviewPrPrompt } from './prompts.ts';
 import { FOOTER, MARKER, type TaskContext, type TaskResult } from './common.ts';
@@ -45,8 +44,7 @@ export async function reviewPr(ctx: TaskContext, prSummary: PrSummary): Promise<
       if (unsafe) { testsNote = `Test command rejected (${unsafe}); treating tests as not run.`; }
       else {
         ctx.log(`verify: ${out.tests.command}`);
-        const t = await sh(out.tests.command, { cwd: wt.path, timeoutMs: ctx.cfg.policy.commandTimeoutSec * 1000, env: { CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' } });
-        const j = judge({ exitCode: 'zero', outputIncludes: null, outputExcludes: null }, t.code, t.timedOut, t.stdout + '\n' + t.stderr);
+        const j = await verify({ setup: [], command: out.tests.command }, { exitCode: 'zero' }, wt.path, ctx.cfg.policy.commandTimeoutSec * 1000);
         testsVerified = j.ok;
         testsNote = j.ok ? `Tests re-run by the runner: \`${out.tests.command}\` → passed.` : `Tests re-run by the runner: \`${out.tests.command}\` → **failed** (${j.reason}).`;
         if (!j.ok && out.tests.passed) ctx.log('agent claimed tests passed but they fail; downgrading verdict');

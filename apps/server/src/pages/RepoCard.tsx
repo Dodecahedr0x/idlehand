@@ -1,5 +1,6 @@
 import type { FC } from 'hono/jsx';
 import type { RepoCard as Card, StoredRunReport } from '@idlehand/shared';
+import { formatCost } from '@idlehand/shared';
 
 const GOOD = new Set(['reviewed', 'merged', 'pr-opened', 'issues-filed']);
 const MEH = new Set(['nothing-found', 'unverified']);
@@ -18,7 +19,7 @@ export const RunList: FC<{ runs: StoredRunReport[] }> = ({ runs }) =>
           <p class="run-summary">{r.summary}</p>
           <div class="run-meta">
             {r.url ? <a href={r.url} target="_blank" rel="noopener">View on GitHub ↗</a> : null}
-            <span class="muted">{r.costEstimated ? '≈' : ''}${r.costUsd.toFixed(2)} · {r.provider}</span>
+            <span class="muted">{formatCost(r.costUsd, r.costEstimated, r.costUnknown)} · {r.provider}</span>
             <time class="muted" dateTime={r.startedAt}>{r.startedAt.slice(0, 10)}</time>
           </div>
         </li>

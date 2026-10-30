@@ -28,7 +28,7 @@ bun test apps/server
 
 ## Endpoints
 
-- Pages: `/`, `/login`, `/dashboard`, `/popular`, `/cli/approve?code=…`, `/logout`
+- Pages: `/`, `/login`, `/dashboard`, `/install`, `/popular`, `/cli/approve?code=…`, `/logout`
 - Auth: `/auth/github`, `/auth/github/callback`, `/auth/dev` (dev only)
 - Browser API (cookie + `X-Requested-With: fetch` on mutations): `/api/me`, `/api/me/repos?page=`, `/api/selections` (GET/POST/DELETE `/:owner/:name`), `/api/repos/popular`, `/api/repos/search?q=`
 - CLI device login: `POST /api/cli/codes`, `GET /api/cli/codes/:deviceCode`
@@ -48,3 +48,5 @@ leave the saved selection intact and display a recovery message in the page.
 GitHub OAuth still requires your own configured OAuth app for a live sign-in test.
 The default sign-in scope remains `read:user`; the web app does not change the
 local CLI's GitHub permissions.
+
+The public `/install` guide builds the local CLI from the source repository. Dashboard setup status confirms a CLI only after it authenticates with a still-present token. Successful contribution reports complete the first-contribution step; failed, unverified, and nothing-found results have separate guidance. Refresh the dashboard after login and `idlehand doctor` or a run to update that status.

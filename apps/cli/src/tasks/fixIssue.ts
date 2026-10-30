@@ -1,7 +1,6 @@
-import { ensureBase, headSha, makeWorktree, hasChanges, commitAll, pushBranch, diffStat } from '../workspace.ts';
+import { ensureBase, headSha, makeWorktree, hasChanges, stageChanges, commitAll, pushBranch, diffStat } from '../workspace.ts';
 import { authToken, commentOnIssue, createPr, forkRepo, type IssueSummary } from '../gh.ts';
-import { commandLooksSafe, verify, runSetup, judge } from '../verify.ts';
-import { sh } from '../shell.ts';
+import { commandLooksSafe, verify } from '../verify.ts';
 import { FIX_ISSUE_SCHEMA } from './schemas.ts';
 import { fixIssuePrompt } from './prompts.ts';
 import { FOOTER, MARKER, fmtCmd, fmtOut, type TaskContext, type TaskResult } from './common.ts';
@@ -64,27 +63,25 @@ export async function fixIssue(ctx: TaskContext, issue: IssueSummary): Promise<T
     } finally {
       await baseWt.remove();
     }
-    if (!before.ok) return done('unverified', `could not confirm the bug on ${defaultBranch}: ${before.reason}`, run);
+    if (!before.ok) return done(before.infrastructureError ? 'failed' : 'unverified', `could not confirm the bug on ${defaultBranch}: ${before.reason}`, run);
 
     // 2. The reproduction must pass on the fix branch (agent's own scratch state removed by re-running setup).
     ctx.log('verify: reproduction passes on the fix…');
     const after = await verify(out.reproduction, out.expectAfter, wt.path, timeout, ctx.log);
-    if (!after.ok) return done('unverified', `fix does not make the reproduction pass: ${after.reason}`, run);
+    if (!after.ok) return done(after.infrastructureError ? 'failed' : 'unverified', `fix does not make the reproduction pass: ${after.reason}`, run);
 
     // 3. Tests pass on the fix branch.
     let testTail = '(no test command)';
     if (out.testCommand) {
       ctx.log(`verify: tests — ${out.testCommand}`);
-      const setupFail = await runSetup(out.reproduction.setup, wt.path, timeout);
-      if (setupFail) return done('unverified', `setup failed before tests: ${setupFail.reason}`, run);
-      const t = await sh(out.testCommand, { cwd: wt.path, timeoutMs: timeout, env: { CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' } });
-      const j = judge({ exitCode: 'zero', outputIncludes: null, outputExcludes: null }, t.code, t.timedOut, t.stdout + '\n' + t.stderr);
-      if (!j.ok) return done('unverified', `tests fail on the fix branch: ${j.reason}\n${j.outputTail.slice(-1500)}`, run);
+      const j = await verify({ setup: out.reproduction.setup, command: out.testCommand }, { exitCode: 'zero' }, wt.path, timeout, ctx.log);
+      if (!j.ok) return done(j.infrastructureError ? 'failed' : 'unverified', `tests fail on the fix branch: ${j.reason}\n${j.outputTail.slice(-1500)}`, run);
       testTail = j.outputTail;
     }
 
     // Commit, push (to origin if we may, else to a fork), open PR.
-    await sh('git clean -fdq -e node_modules', { cwd: wt.path }).catch(() => {});
+    // Preserve new modules and regression tests; generated files belong in .gitignore.
+    await stageChanges(wt.path);
     const stat = await diffStat(wt.path, `origin/${defaultBranch}`);
     const sha = await commitAll(wt.path, `Fix #${issue.number}: ${issue.title}\n\n${out.summary.trim()}\n\nCloses #${issue.number}`);
     const canPush = !!ctx.info.permissions?.push;

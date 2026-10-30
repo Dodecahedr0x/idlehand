@@ -1,5 +1,5 @@
 /** Non-interactive renderers for the scheduler: human-readable lines or JSONL. */
-import { formatBudget, type Budget } from '@idlehand/shared';
+import { formatBudget, formatCost, type Budget } from '@idlehand/shared';
 import type { Scheduler, SchedulerEvent } from '../scheduler.ts';
 
 const ICON: Record<string, string> = {
@@ -21,7 +21,7 @@ export function attachPlain(s: Scheduler, budget: Budget, subscriptionUsd?: numb
       case 'log': w(`    ${e.line}`); break;
       case 'task-done': {
         estimated ||= e.result.costEstimated;
-        const cost = `${e.result.costEstimated ? '≈' : ''}$${e.result.costUsd.toFixed(3)}`;
+        const cost = formatCost(e.result.costUsd, e.result.costEstimated, e.result.costUnknown, 3);
         w(`${ICON[e.result.outcome] ?? '·'} ${e.result.outcome} (${cost}, ${Math.round(e.result.durationMs / 1000)}s)${e.result.url ? ` ${e.result.url}` : ''}`);
         if (e.result.outcome === 'failed' || e.result.outcome === 'unverified') w(`    ${e.result.summary.split('\n')[0]}`);
         break;
@@ -29,7 +29,7 @@ export function attachPlain(s: Scheduler, budget: Budget, subscriptionUsd?: numb
       case 'budget': if (!e.verdict.ok) w(`budget: ${e.verdict.reason}`); break;
       case 'done':
         w(`\ndone: ${e.reason}`);
-        w(`spent ${estimated ? '≈' : ''}$${e.usage.spentUsd.toFixed(3)} over ${e.usage.tasksCompleted} task(s) in ${Math.round(e.usage.elapsedMs / 1000)}s`);
+        w(`spent ${formatCost(e.usage.spentUsd, estimated, e.usage.costUnknown, 3)} over ${e.usage.tasksCompleted} task(s) in ${Math.round(e.usage.elapsedMs / 1000)}s`);
         break;
     }
   });

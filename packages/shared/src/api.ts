@@ -77,8 +77,10 @@ export interface RunReport {
   url: string | null;
   summary: string;
   costUsd: number;
-  /** True when costUsd is estimated from tokens rather than reported by the provider. */
+  /** True when costUsd is an estimate, including provider-side dollar estimates. */
   costEstimated: boolean;
+  /** True when costUsd only covers reported usage and final spending is unknown. */
+  costUnknown?: boolean;
   durationMs: number;
   startedAt: string;
 }

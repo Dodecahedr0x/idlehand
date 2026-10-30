@@ -11,6 +11,7 @@ describe('judge', () => {
     expect(judge({ exitCode: 'nonzero', outputIncludes: null, outputExcludes: null }, 0, false, '').ok).toBe(false);
     expect(judge({ exitCode: 'zero', outputIncludes: null, outputExcludes: null }, 0, false, '').ok).toBe(true);
     expect(judge({ exitCode: 'zero', outputIncludes: null, outputExcludes: null }, 0, true, '').reason).toMatch(/timed out/);
+    expect(judge({ exitCode: 'nonzero' }, 1, true, '').infrastructureError).toBe(true);
   });
   test('output substrings, case-insensitive', () => {
     expect(judge({ exitCode: 'nonzero', outputIncludes: 'TypeError', outputExcludes: null }, 1, false, 'x\ntypeerror: boom').ok).toBe(true);
@@ -30,6 +31,7 @@ describe('verify runs real commands', () => {
       expect(fine.ok).toBe(false);
       const badSetup = await verify({ setup: ['exit 7'], command: 'true' }, { exitCode: 'zero', outputIncludes: null, outputExcludes: null }, dir, 10_000);
       expect(badSetup.reason).toMatch(/setup command failed/);
+      expect(badSetup.infrastructureError).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

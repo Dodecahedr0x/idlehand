@@ -8,3 +8,4 @@ export function makeProvider(name: Provider, cfg: Config): AgentProvider {
   return name === 'codex' ? new CodexProvider(cfg.codex) : new ClaudeProvider(cfg.claude);
 }
 export type { AgentProvider, AgentRunRequest, AgentRunResult } from './types.ts';
+export { providerBudgetError } from './types.ts';

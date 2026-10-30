@@ -13,7 +13,7 @@ export interface TaskContext {
   provider: AgentProvider;
   state: State;
   log: (line: string) => void;
-  /** Dollar cap to hand the provider for this run (null = none). */
+  /** Estimated-spend stopping threshold for the provider (null = none). */
   maxBudgetUsd: number | null;
 }
 
@@ -29,6 +29,7 @@ export interface TaskResult {
   summary: string;
   costUsd: number;
   costEstimated: boolean;
+  costUnknown?: boolean;
   durationMs: number;
   exhausted: boolean;
 }

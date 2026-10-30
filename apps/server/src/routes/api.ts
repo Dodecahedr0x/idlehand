@@ -161,6 +161,7 @@ export function apiRoutes() {
       url: report.url ?? null,
       costUsd: Number(report.costUsd) || 0,
       costEstimated: !!report.costEstimated,
+      costUnknown: !!report.costUnknown,
       durationMs: Number(report.durationMs) || 0,
       startedAt: report.startedAt || new Date().toISOString(),
     });
@@ -177,6 +178,8 @@ function validateRunReport(b: Partial<RunReport> | null): string | null {
   if (!b.provider || !PROVIDERS.has(b.provider)) return `provider must be one of ${[...PROVIDERS].join(', ')}`;
   if (!b.outcome || !OUTCOMES.has(b.outcome)) return `outcome must be one of ${[...OUTCOMES].join(', ')}`;
   if (typeof b.summary !== 'string') return 'summary required';
+  if (b.costUnknown !== undefined && typeof b.costUnknown !== 'boolean') return 'costUnknown must be a boolean';
+  if (typeof b.costUsd !== 'number' || !Number.isFinite(b.costUsd) || b.costUsd < 0) return 'costUsd must be a finite nonnegative number';
   if (b.url != null && typeof b.url !== 'string') return 'url must be a string or null';
   return null;
 }

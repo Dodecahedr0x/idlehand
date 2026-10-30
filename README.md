@@ -2,11 +2,11 @@
 
 Point your leftover Claude Code or Codex credits at open source.
 
-You register GitHub repos on the Idlehand web service (yours, or any public repo you care about). On your own machine, `idlehand run` spends a budget you set by spawning your local `claude` or `codex` as a contributor. Nothing is billed separately: it uses the subscription you already pay for, and stops when the budget is reached.
+You register GitHub repos on the Idlehand web service (yours, or any public repo you care about). On your own machine, `idlehand run` spends a budget you set by spawning your local `claude` or `codex` as a contributor. Billing follows the account configured in that provider CLI. Idlehand checks the budget before each task; provider spending thresholds have the limits described below.
 
 ```
-idlehand run --budget 10%        # 10% of your subscription this run
-idlehand run --budget '$5'       # five dollars of list-price usage
+idlehand run --provider claude --budget 10%  # threshold from your declared plan value
+idlehand run --provider claude --budget '$5' # five-dollar estimated-spend threshold
 idlehand run --budget remaining  # keep going until the provider says stop
 ```
 
@@ -16,7 +16,7 @@ idlehand run --budget remaining  # keep going until the provider says stop
 2. **Work open issues.** Reproduces the issue first, fixes it on a branch, adds a test, then opens a PR. If the account cannot push, it pushes to a fork.
 3. **Review the codebase** for real, reproducible defects and files them as issues (at most every 72 hours per repo).
 
-The budget is checked before every task and passed down to the agent as a hard dollar cap, so a single task cannot overshoot.
+Dollar and percent budgets use Claude Code's native spending threshold, passing the exact remaining amount without rounding it up. In-flight calls can overshoot; leave headroom. Codex cannot enforce a dollar threshold, so Idlehand refuses dollar and percent budgets before starting it. Choose an explicit task, time, or `remaining` budget to use Codex without a dollar cap.
 
 ## No hallucinated issues
 
@@ -27,6 +27,10 @@ The agent is never trusted on its word. Every claim comes with a shell command, 
 - A **PR review** can only approve if the runner re-ran the test command and it passed. Otherwise the verdict is downgraded to a comment.
 
 Findings that do not survive are logged as `unverified` and discarded. Commands that would touch GitHub, use sudo, or delete outside the checkout are rejected before they run.
+
+The runner executes every setup, reproduction and test command inside an OS sandbox: `sandbox-exec` on macOS, or [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`, with user namespaces enabled) on Linux. Install bubblewrap using your distribution's package manager, such as `sudo apt install bubblewrap` on Debian/Ubuntu. If the sandbox is missing or cannot start, verification fails closed and the runner cannot approve or publish that contribution.
+
+Verification can write only inside its checkout. It gets a temporary home, no inherited credentials, no access to your home directory, and no network access, including localhost services. Dependencies must already be available inside the checkout; setup commands cannot download packages or use your personal package caches. The runner kills each command's process group after completion or timeout. On macOS, children that deliberately start a separate session can outlive this cleanup, while retaining the filesystem and network restrictions. Linux bubblewrap also isolates the process namespace. This boundary applies to runner verification; the contribution agent still uses its provider's configured permissions.
 
 ## Layout
 
@@ -51,7 +55,7 @@ bun run cli doctor                  # checks gh, claude/codex, server
 bun run cli login                   # approve the code in the browser
 bun run cli config set subscription.monthlyUsd 200   # needed for percent budgets
 bun run cli run --dry-run           # see what it would do, spend nothing
-bun run cli run --budget '$2'
+bun run cli run --provider claude --budget '$2'
 ```
 
 To build a standalone binary: `bun run --cwd apps/cli build` writes `apps/cli/dist/idlehand`.
@@ -85,6 +89,8 @@ Use `--dry-run` to preview the queue using your GitHub login. It does not requir
 
 Useful settings (`idlehand config keys` lists them all):
 
+Agent and tooling failures are eligible for another attempt on a later run after a 15-minute cooldown, up to three attempts per target. Completed work, findings that could not be verified, and issues with no actionable fix are not retried automatically. Failed attempts still count toward spending and task budgets. Codebase scans use a daily target and also respect the review interval below.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `provider` | `claude` | Which agent CLI to spawn. |
@@ -99,7 +105,9 @@ Useful settings (`idlehand config keys` lists them all):
 
 ## How budgets are measured
 
-Claude Code reports `total_cost_usd` for each headless run, so dollar and percent budgets are exact at list price. Codex reports tokens only; the CLI estimates dollars with the configured price table and marks those figures with `≈`. Neither CLI exposes a subscription's live quota, so `10%` means ten percent of the monthly value you declare. `remaining` means no cap of our own: the run ends when the provider refuses to continue or there is no more work.
+Claude Code reports its client-side dollar estimate in `total_cost_usd`; [its native budget flag](https://code.claude.com/docs/en/cli-reference) stops at a spending threshold and can overshoot during in-flight calls. Codex reports tokens only; Idlehand estimates dollars with the configured price table. Both estimates are marked with `≈` and can differ from a bill. Codex dollar and percent budgets are rejected because the [Codex exec interface](https://developers.openai.com/codex/cli/reference/) has no dollar stopping threshold. Missing final accounting stops the run instead of allowing more untracked spending; any reported partial usage is retained, and zero without accounting does not mean the task was free.
+
+Neither CLI exposes a subscription's live quota, so `10%` means ten percent of the monthly value you declare. Task and time budgets are checked between tasks, so a current task can finish after a time budget expires. `remaining` means no cap of our own: the run ends when the provider refuses to continue or there is no more work.
 
 ## Opting out
 

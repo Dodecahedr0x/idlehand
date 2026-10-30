@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
-import { checkBudget, formatBudget, parseBudget, type TaskKind } from '@idlehand/shared';
+import { checkBudget, formatBudget, formatCost, parseBudget, usdCap, type TaskKind } from '@idlehand/shared';
 import { DEFAULT_CONFIG, getConfigValue, loadConfig, redactConfig, saveConfig, setConfigValue } from './config.ts';
 import { State } from './state.ts';
 import { ServerClient, ServerError } from './server.ts';
-import { makeProvider } from './providers/index.ts';
+import { makeProvider, providerBudgetError } from './providers/index.ts';
 import { Scheduler } from './scheduler.ts';
 import { attachJson, attachPlain } from './ui/plain.ts';
 import { exec, which } from './shell.ts';
@@ -25,10 +25,11 @@ Quick start:
   idlehand doctor                         Check your setup
   idlehand repos add owner/name           Pick a repository (no server needed)
   idlehand run --dry-run                   Preview the work without spending credits
-  idlehand run --budget '$2' --once        Try one task, capped at two dollars
+  idlehand run --provider claude --budget '$2' --once   Try one task with a $2 stopping threshold
 
 Use idlehand login to sync repository selections from the web.
 Quote dollar budgets with single quotes so your shell preserves the $ sign.
+Claude dollar thresholds can overshoot during in-flight calls. Codex needs a task, time, or remaining budget.
 Output switches to plain text when piped. Use --json for JSONL.
 Exit codes: 0 success, 1 setup or command error, 2 one or more tasks failed.`);
 
@@ -157,12 +158,13 @@ program
   .addHelpText('after', `
 Examples:
   idlehand run --dry-run --repo honojs/hono
-  idlehand run --budget '$2' --once
+  idlehand run --provider claude --budget '$2' --once
   idlehand run --provider codex --budget '3 tasks' --only fix-issue
-  idlehand run --budget 10%                Requires subscription.monthlyUsd
+  idlehand run --provider claude --budget 10%   Requires subscription.monthlyUsd
   idlehand run --json --budget 45m > run.jsonl
 
 Ctrl+C or q in the dashboard stops after the current task finishes.
+Claude dollar thresholds can overshoot during in-flight calls. Codex has no dollar cap.
 Dry runs need gh login, but do not need an agent CLI or change saved task records.`)
   .action(async (opts: { budget?: string; provider?: string; repo?: string[]; only?: TaskKind[]; once?: boolean; dryRun?: boolean; report: boolean }) => {
     const cfg = loadConfig();
@@ -174,6 +176,8 @@ Dry runs need gh login, but do not need an agent CLI or change saved task record
     if (!['claude', 'codex'].includes(providerName)) return fail('provider must be claude or codex');
     const provider = makeProvider(providerName, cfg);
     if (!opts.dryRun) {
+      const budgetError = providerBudgetError(provider, usdCap(budget, cfg.subscription.monthlyUsd ?? undefined));
+      if (budgetError) return fail(budgetError);
       const check = await provider.check();
       if (!check.ok) return fail(`${check.detail}. Run idlehand doctor to check your setup.`);
     }
@@ -237,10 +241,10 @@ program
     if (wantsJson()) return out({ login: cfg.server.login, server: cfg.server.url, provider: cfg.provider, budget: cfg.budget, month: totals, recent });
     const b = parseBudget(cfg.budget);
     console.log(`idlehand · ${cfg.server.login ? `logged in as ${cfg.server.login} at ${cfg.server.url}` : 'not logged in'} · provider ${cfg.provider} · default budget ${formatBudget(b, cfg.subscription.monthlyUsd ?? undefined)}`);
-    console.log(`this month: ${totals.estimated ? '≈' : ''}$${totals.spentUsd.toFixed(2)} over ${totals.tasks} task(s)`);
+    console.log(`this month: ${formatCost(totals.spentUsd, totals.estimated, totals.costUnknown)} over ${totals.tasks} task(s)`);
     if (!recent.length) return console.log('no tasks yet — run `idlehand run`');
     console.log('\nrecent:');
-    for (const t of recent) console.log(`  ${t.started_at.slice(0, 16).replace('T', ' ')}  ${t.outcome.padEnd(13)} ${t.kind.padEnd(16)} ${t.repo} ${t.target}${t.url ? `  ${t.url}` : ''}  ${t.cost_estimated ? '≈' : ''}$${t.cost_usd.toFixed(2)}`);
+    for (const t of recent) console.log(`  ${t.started_at.slice(0, 16).replace('T', ' ')}  ${t.outcome.padEnd(13)} ${t.kind.padEnd(16)} ${t.repo} ${t.target}${t.url ? `  ${t.url}` : ''}  ${formatCost(t.cost_usd, !!t.cost_estimated, !!t.cost_unknown)}`);
   });
 
 program.command('doctor').description('Check gh, the agent CLIs, and the server connection').action(async () => {
@@ -266,6 +270,10 @@ program.command('doctor').description('Check gh, the agent CLIs, and the server 
     const ready = checkBudget(b, { spentUsd: 0, tasksCompleted: 0, elapsedMs: 0, providerExhausted: false }, cfg.subscription.monthlyUsd ?? undefined);
     budgetOk = ready.ok;
     budgetDetail = ready.ok ? formatBudget(b, cfg.subscription.monthlyUsd ?? undefined) : ready.reason;
+    if (ready.ok) {
+      const budgetError = providerBudgetError(makeProvider(cfg.provider, cfg), usdCap(b, cfg.subscription.monthlyUsd ?? undefined));
+      if (budgetError) { budgetOk = false; budgetDetail = budgetError; }
+    }
   } catch (e) { budgetOk = false; budgetDetail = (e as Error).message; }
   checks.push({ name: 'budget', ok: budgetOk, detail: budgetDetail });
   checks.push({ name: 'home', ok: true, detail: HOME });

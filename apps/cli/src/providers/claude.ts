@@ -1,6 +1,7 @@
 import type { Config } from '../config.ts';
+import { formatCost } from '@idlehand/shared';
 import { exec, tail, which } from '../shell.ts';
-import { EXHAUSTED_RE, extractJson, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
+import { EXHAUSTED_RE, extractJson, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
 
 /**
  * Claude Code in headless mode: `claude -p --output-format stream-json`.
@@ -10,6 +11,7 @@ import { EXHAUSTED_RE, extractJson, type AgentProvider, type AgentRunRequest, ty
  */
 export class ClaudeProvider implements AgentProvider {
   readonly name = 'claude' as const;
+  readonly supportsUsdBudget = true;
   constructor(private cfg: Config['claude']) {}
 
   async check() {
@@ -20,6 +22,8 @@ export class ClaudeProvider implements AgentProvider {
   }
 
   async run(req: AgentRunRequest): Promise<AgentRunResult> {
+    const budgetError = providerBudgetError(this, req.maxBudgetUsd);
+    if (budgetError) return refusedRun(budgetError);
     const args = [
       '-p', req.prompt,
       '--output-format', 'stream-json', '--verbose',
@@ -29,7 +33,7 @@ export class ClaudeProvider implements AgentProvider {
     ];
     if (this.cfg.allowedTools.length) args.push('--allowedTools', ...this.cfg.allowedTools);
     if (this.cfg.model) args.push('--model', this.cfg.model);
-    if (req.maxBudgetUsd != null) args.push('--max-budget-usd', Math.max(0.05, req.maxBudgetUsd).toFixed(2));
+    if (req.maxBudgetUsd != null) args.push('--max-budget-usd', String(req.maxBudgetUsd));
 
     let result: Record<string, unknown> | null = null;
     let partial = '';
@@ -43,6 +47,7 @@ export class ClaudeProvider implements AgentProvider {
         if (!line.trim()) continue;
         let ev: Record<string, unknown>;
         try { ev = JSON.parse(line); } catch { continue; }
+        if (!ev || typeof ev !== 'object' || Array.isArray(ev)) continue;
         this.describe(ev, req.onLog, seenText);
         if (ev.type === 'result') result = ev;
       }
@@ -54,10 +59,11 @@ export class ClaudeProvider implements AgentProvider {
       onOutput,
       env: { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', FORCE_COLOR: '0' },
     });
-    if (!result && partial.trim()) { try { const ev = JSON.parse(partial); if (ev.type === 'result') result = ev; } catch {} }
+    if (!result && partial.trim()) { try { const ev = JSON.parse(partial); if (ev && typeof ev === 'object' && ev.type === 'result') result = ev; } catch {} }
 
     const res = result as Record<string, any> | null;
-    const costUsd = Number(res?.total_cost_usd ?? 0) || 0;
+    const costKnown = typeof res?.total_cost_usd === 'number' && Number.isFinite(res.total_cost_usd) && res.total_cost_usd >= 0;
+    const costUsd = costKnown ? res!.total_cost_usd as number : 0;
     const resultText = typeof res?.result === 'string' ? res.result : '';
     const errText = [r.stderr, res?.is_error ? resultText : ''].join('\n');
     const exhausted = EXHAUSTED_RE.test(errText) || (r.code !== 0 && EXHAUSTED_RE.test(r.stdout.slice(-4000)));
@@ -66,15 +72,24 @@ export class ClaudeProvider implements AgentProvider {
 
     let error: string | null = null;
     if (r.timedOut) error = `claude timed out after ${Math.round(req.timeoutMs / 60000)} min`;
+    else if (r.code !== 0) error = `claude exited ${r.code}: ${tail(r.stderr, 8, 600)}`;
     else if (!res) error = `claude exited ${r.code} without a result: ${tail(r.stderr, 10, 800) || tail(r.stdout, 5, 800)}`;
     else if (res.is_error) error = `claude reported an error (${res.subtype ?? 'unknown'}): ${tail(resultText, 6, 600)}`;
     else if (res.subtype && res.subtype !== 'success') error = `claude stopped: ${res.subtype}`;
     else if (output == null) error = 'claude finished without structured output';
+    if (!costKnown) {
+      error = `${error ?? 'claude finished'}; dollar usage is unknown because final accounting was not reported`;
+      req.onLog(error);
+    }
+    if (req.maxBudgetUsd != null && costKnown && costUsd > req.maxBudgetUsd) {
+      error ??= `claude reached the $${req.maxBudgetUsd} budget threshold (reported $${costUsd}); in-flight usage can exceed the threshold`;
+    }
 
     return {
       output,
       costUsd,
-      costEstimated: false,
+      costEstimated: true,
+      costUnknown: !costKnown,
       durationMs: r.durationMs,
       exhausted,
       error,
@@ -103,7 +118,8 @@ export class ClaudeProvider implements AgentProvider {
     } else if (ev.type === 'system' && ev.subtype === 'init') {
       log(`session ${String(ev.session_id ?? '').slice(0, 8)} · model ${ev.model ?? '?'}`);
     } else if (ev.type === 'result') {
-      log(`result: ${ev.subtype} · $${Number(ev.total_cost_usd ?? 0).toFixed(3)} · ${ev.num_turns ?? '?'} turns`);
+      const known = typeof ev.total_cost_usd === 'number' && Number.isFinite(ev.total_cost_usd) && ev.total_cost_usd >= 0;
+      log(`result: ${ev.subtype} · ${formatCost(known ? ev.total_cost_usd : 0, true, !known, 3)} · ${ev.num_turns ?? '?'} turns`);
     }
   }
 }

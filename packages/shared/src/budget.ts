@@ -24,10 +24,18 @@ export type Budget =
 
 export interface BudgetUsage {
   spentUsd: number;
+  /** Some tasks did not report final accounting; spentUsd is incomplete. */
+  costUnknown?: boolean;
   tasksCompleted: number;
   elapsedMs: number;
   /** Set when the provider itself refused to continue (rate limit, no credits). */
   providerExhausted: boolean;
+}
+
+/** Keep missing accounting distinct from a measured zero. */
+export function formatCost(costUsd: number, estimated: boolean, unknown = false, digits = 2): string {
+  const reported = `${estimated ? '≈' : ''}$${costUsd.toFixed(digits)}`;
+  return unknown ? `unknown (reported ${reported})` : reported;
 }
 
 export class BudgetParseError extends Error {}
@@ -107,6 +115,7 @@ export type BudgetVerdict =
 
 /** Decide whether another task may start under the budget. */
 export function checkBudget(b: Budget, u: BudgetUsage, subscriptionMonthlyUsd?: number): BudgetVerdict {
+  if (u.costUnknown) return { ok: false, reason: 'provider cost unavailable; stopped to avoid untracked spending' };
   if (u.providerExhausted) return { ok: false, reason: 'provider refused to continue (credits or rate limit exhausted)' };
   const cap = usdCap(b, subscriptionMonthlyUsd);
   const remainingUsd = cap == null ? null : cap - u.spentUsd;

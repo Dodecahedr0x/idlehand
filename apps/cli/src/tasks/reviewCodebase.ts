@@ -32,8 +32,8 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
 
     const out = run.output as { findings: Finding[]; notes: string };
     const findings = Array.isArray(out.findings) ? out.findings.slice(0, ctx.cfg.policy.maxIssuesPerReview) : [];
-    ctx.state.markCodebaseReview(ctx.repo, sha);
     if (findings.length === 0) {
+      ctx.state.markCodebaseReview(ctx.repo, sha);
       return { kind, outcome: 'nothing-found', url: null, summary: `No reproducible defects found. ${out.notes ?? ''}`.trim(), costUsd: run.costUsd, costEstimated: run.costEstimated, durationMs: Date.now() - started, exhausted: run.exhausted };
     }
 
@@ -41,6 +41,7 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
     const clean = await makeWorktree(ctx.repo, base, `origin/${branch}`, 'verify');
     const filed: string[] = [];
     const rejected: string[] = [];
+    let infrastructureFailed = false;
     try {
       const timeout = ctx.cfg.policy.commandTimeoutSec * 1000;
       let labelOk: boolean | null = null;
@@ -49,10 +50,13 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
         if (unsafe) { rejected.push(`${f.title}: ${unsafe}`); ctx.log(`✗ ${f.title} — ${unsafe}`); continue; }
         if (existing.some((i) => similarTitle(i.title, f.title))) { rejected.push(`${f.title}: similar open issue exists`); ctx.log(`✗ ${f.title} — similar issue already open`); continue; }
         ctx.log(`verifying: ${f.title}`);
-        // Scratch files the agent created may be referenced by the command; copy them over if they are untracked in the agent worktree.
-        await copyUntracked(wt.path, clean.path, ctx.log);
         const v = await verify(f.reproduction, f.expect, clean.path, timeout, ctx.log);
-        if (!v.ok) { rejected.push(`${f.title}: ${v.reason}`); ctx.log(`✗ unverified — ${v.reason}`); continue; }
+        if (!v.ok) {
+          infrastructureFailed ||= !!v.infrastructureError;
+          rejected.push(`${f.title}: ${v.reason}`);
+          ctx.log(`✗ ${v.infrastructureError ? 'verification unavailable' : 'unverified'} — ${v.reason}`);
+          continue;
+        }
         ctx.log(`✓ reproduced (exit ${v.exitCode})`);
         if (labelOk == null) labelOk = await ensureLabel(ctx.repo, 'idlehand', '6f42c1', 'Filed by an Idlehand node after re-verifying the reproduction');
         const body = [
@@ -76,10 +80,11 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
     } finally {
       await clean.remove();
     }
+    if (!infrastructureFailed) ctx.state.markCodebaseReview(ctx.repo, sha);
     const summary = `${filed.length} issue(s) filed, ${rejected.length} finding(s) rejected.` + (rejected.length ? ` Rejected: ${rejected.join('; ')}` : '');
     return {
       kind,
-      outcome: filed.length ? 'issues-filed' : 'unverified',
+      outcome: infrastructureFailed ? 'failed' : filed.length ? 'issues-filed' : 'unverified',
       url: filed[0] ?? null,
       summary,
       costUsd: run.costUsd,
@@ -90,17 +95,4 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
   } finally {
     await wt.remove();
   }
-}
-
-async function copyUntracked(from: string, to: string, log: (l: string) => void) {
-  const { exec } = await import('../shell.ts');
-  const r = await exec(['git', 'ls-files', '--others', '--exclude-standard', '-z'], { cwd: from });
-  const files = r.stdout.split('\0').filter(Boolean).filter((f) => !f.includes('node_modules/'));
-  if (!files.length) return;
-  const { mkdirSync, copyFileSync } = await import('node:fs');
-  const { dirname, join } = await import('node:path');
-  for (const f of files.slice(0, 50)) {
-    try { mkdirSync(dirname(join(to, f)), { recursive: true }); copyFileSync(join(from, f), join(to, f)); } catch {}
-  }
-  log(`copied ${Math.min(files.length, 50)} scratch file(s) into the clean checkout`);
 }

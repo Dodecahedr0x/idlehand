@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { planCandidates, type RepoScan } from './scheduler.ts';
 import { DEFAULT_CONFIG } from './config.ts';
-import { State } from './state.ts';
+import { State, TASK_RETRY_DELAY_MS } from './state.ts';
 import type { IssueSummary, PrSummary, RepoInfo } from './gh.ts';
 
 const info = (over: Partial<RepoInfo> = {}): RepoInfo => ({ full_name: 'o/r', default_branch: 'main', private: false, fork: false, archived: false, html_url: '', clone_url: '', permissions: { admin: false, push: false, pull: true }, ...over });
@@ -64,5 +64,21 @@ describe('planCandidates', () => {
     expect(plan.map((c) => c.repo)).toEqual(['o/fresh']);
     const later = new Date(Date.now() + 100 * 3_600_000);
     expect(planCandidates(scans, { ...b, now: later }).map((c) => c.repo)).toEqual(['o/r', 'o/fresh']);
+  });
+
+  test('failed work becomes eligible after cooling down while completed work stays skipped', () => {
+    const b = base();
+    try {
+      const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [pr(1)], issues: [issue(2), issue(3)] }];
+      for (const [kind, target, outcome] of [['review-pr', 'pr:1', 'failed'], ['fix-issue', 'issue:2', 'failed'], ['fix-issue', 'issue:3', 'pr-opened']] as const) {
+        const id = b.state.startTask({ repo: 'o/r', kind, target, provider: 'claude' });
+        b.state.finishTask(id, { outcome, url: null, summary: outcome, costUsd: 0.1, costEstimated: false, durationMs: 1 });
+      }
+      const only = ['review-pr', 'fix-issue'] as const;
+      expect(planCandidates(scans, { ...b, only: [...only] })).toEqual([]);
+      expect(planCandidates(scans, { ...b, only: [...only], now: new Date(Date.now() + TASK_RETRY_DELAY_MS + 1000) }).map((c) => c.target)).toEqual(['pr:1', 'issue:2']);
+    } finally {
+      b.state.close();
+    }
   });
 });
