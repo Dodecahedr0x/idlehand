@@ -1,0 +1,68 @@
+import { describe, expect, test } from 'bun:test';
+import { planCandidates, type RepoScan } from './scheduler.ts';
+import { DEFAULT_CONFIG } from './config.ts';
+import { State } from './state.ts';
+import type { IssueSummary, PrSummary, RepoInfo } from './gh.ts';
+
+const info = (over: Partial<RepoInfo> = {}): RepoInfo => ({ full_name: 'o/r', default_branch: 'main', private: false, fork: false, archived: false, html_url: '', clone_url: '', permissions: { admin: false, push: false, pull: true }, ...over });
+const pr = (n: number, over: Partial<PrSummary> = {}): PrSummary => ({ number: n, title: `PR ${n}`, author: { login: 'someone' }, isDraft: false, headRefOid: 'abc', headRefName: `feat-${n}`, baseRefName: 'main', url: '', updatedAt: '2026-01-01T00:00:00Z', createdAt: `2026-01-0${n}T00:00:00Z`, reviews: [], labels: [], additions: 1, deletions: 1, isCrossRepository: false, ...over });
+const issue = (n: number, over: Partial<IssueSummary> = {}): IssueSummary => ({ number: n, title: `Issue ${n}`, body: '', author: { login: 'x' }, labels: [], assignees: [], url: '', createdAt: `2026-01-0${n}T00:00:00Z`, updatedAt: '', comments: { totalCount: 0 }, state: 'OPEN', ...over });
+
+describe('planCandidates', () => {
+  const base = () => ({ login: 'me', cfg: structuredClone(DEFAULT_CONFIG), state: new State(':memory:') });
+
+  test('priority: PRs, then issues, then codebase; oldest PR first', () => {
+    const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [pr(3), pr(1)], issues: [issue(5)] }];
+    const plan = planCandidates(scans, base());
+    expect(plan.map((c) => c.kind)).toEqual(['review-pr', 'review-pr', 'fix-issue', 'review-codebase']);
+    expect(plan.map((c) => c.target)).toEqual(['pr:1', 'pr:3', 'issue:5', expect.stringMatching(/^codebase:/)]);
+  });
+
+  test('skips own, draft, already-reviewed and opted-out PRs', () => {
+    const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [
+      pr(1, { author: { login: 'me' } }),
+      pr(2, { isDraft: true }),
+      pr(3, { reviews: [{ author: { login: 'me' }, state: 'COMMENTED' }] }),
+      pr(4, { labels: [{ name: 'no-idlehand' }] }),
+      pr(5),
+    ], issues: [] }];
+    const plan = planCandidates(scans, { ...base(), only: ['review-pr'] });
+    expect(plan.map((c) => c.target)).toEqual(['pr:5']);
+  });
+
+  test('skips issues that are assigned to others, labelled skip, referenced by a PR, or already attempted; boosts bug labels', () => {
+    const b = base();
+    b.state.startTask({ repo: 'o/r', kind: 'fix-issue', target: 'issue:4', provider: 'claude' });
+    const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [pr(9, { title: 'Fixes #3' })], issues: [
+      issue(1, { assignees: [{ login: 'other' }] }),
+      issue(2, { labels: [{ name: 'question' }] }),
+      issue(3),
+      issue(4),
+      issue(5),
+      issue(6, { labels: [{ name: 'bug' }] }),
+    ] }];
+    const plan = planCandidates(scans, { ...b, only: ['fix-issue'] });
+    expect(plan.map((c) => c.target)).toEqual(['issue:6', 'issue:5']);
+  });
+
+  test('issueLabels filter restricts to matching labels', () => {
+    const b = base();
+    b.cfg.policy.issueLabels = ['help wanted'];
+    const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [], issues: [issue(1), issue(2, { labels: [{ name: 'Help Wanted' }] })] }];
+    expect(planCandidates(scans, { ...b, only: ['fix-issue'] }).map((c) => c.target)).toEqual(['issue:2']);
+  });
+
+  test('codebase review respects the interval and archived repos', () => {
+    const b = base();
+    b.state.markCodebaseReview('o/r', 'abc');
+    const scans: RepoScan[] = [
+      { repo: 'o/r', info: info(), prs: [], issues: [] },
+      { repo: 'o/arch', info: info({ archived: true }), prs: [pr(1)], issues: [issue(1)] },
+      { repo: 'o/fresh', info: info(), prs: [], issues: [] },
+    ];
+    const plan = planCandidates(scans, b);
+    expect(plan.map((c) => c.repo)).toEqual(['o/fresh']);
+    const later = new Date(Date.now() + 100 * 3_600_000);
+    expect(planCandidates(scans, { ...b, now: later }).map((c) => c.repo)).toEqual(['o/r', 'o/fresh']);
+  });
+});

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.sqlite
+*.sqlite-*
+.env
+.DS_Store
+# stray artifacts from the earlier python prototype
+idlehand.egg-info/
+target/

@@ -1,0 +1,18 @@
+{
+  "name": "idlehand",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Point your leftover Claude Code / Codex credits at open source. A web service to register GitHub repos and a local CLI that spends a budget contributing to them.",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "server": "bun run --cwd apps/server dev",
+    "cli": "bun run apps/cli/src/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "bun-types": "^1.4.4",
+    "typescript": "^5.6.0"
+  }
+}

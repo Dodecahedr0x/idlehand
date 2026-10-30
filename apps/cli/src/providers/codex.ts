@@ -1,0 +1,88 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Config } from '../config.ts';
+import { exec, tail, which } from '../shell.ts';
+import { EXHAUSTED_RE, extractJson, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
+
+/**
+ * OpenAI Codex CLI in non-interactive mode: `codex exec --json`.
+ * stdout is JSONL events; `turn.completed` carries token usage. The final
+ * message is written to a file via `-o`. Codex does not report dollars, so
+ * cost is *estimated* from tokens with the configured price table.
+ */
+export class CodexProvider implements AgentProvider {
+  readonly name = 'codex' as const;
+  constructor(private cfg: Config['codex']) {}
+
+  async check() {
+    const path = await which(this.cfg.bin);
+    if (!path) return { ok: false, detail: `${this.cfg.bin} not found on PATH (npm i -g @openai/codex)` };
+    const r = await exec([this.cfg.bin, '--version'], { timeoutMs: 20_000 });
+    return { ok: r.code === 0, detail: r.code === 0 ? `${path} (${r.stdout.trim()})` : r.stderr.trim() };
+  }
+
+  async run(req: AgentRunRequest): Promise<AgentRunResult> {
+    const tmp = mkdtempSync(join(tmpdir(), 'idlehand-codex-'));
+    const schemaPath = join(tmp, 'schema.json');
+    const lastPath = join(tmp, 'last.txt');
+    writeFileSync(schemaPath, JSON.stringify(req.schema));
+    const args = ['exec', '--json', '-C', req.cwd, '-s', this.cfg.sandbox, '--skip-git-repo-check', '--output-schema', schemaPath, '-o', lastPath, '--color', 'never'];
+    if (this.cfg.model) args.push('-m', this.cfg.model);
+    args.push(req.prompt);
+
+    let usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
+    let partial = '';
+    let errorEvent: string | null = null;
+    const texts: string[] = [];
+    const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => {
+      if (stream === 'stderr') { for (const l of chunk.split('\n')) if (l.trim()) req.onLog(`stderr: ${l.trim()}`); return; }
+      partial += chunk;
+      const lines = partial.split('\n');
+      partial = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let ev: any;
+        try { ev = JSON.parse(line); } catch { continue; }
+        const type = String(ev.type ?? '');
+        if (type === 'turn.completed' && ev.usage) {
+          usage = {
+            input_tokens: usage.input_tokens + (ev.usage.input_tokens ?? 0),
+            cached_input_tokens: usage.cached_input_tokens + (ev.usage.cached_input_tokens ?? 0),
+            output_tokens: usage.output_tokens + (ev.usage.output_tokens ?? 0),
+          };
+        } else if (type === 'item.completed' || type === 'item.started') {
+          const item = ev.item ?? {};
+          if (item.type === 'command_execution' && type === 'item.started') req.onLog(`🔧 ${String(item.command ?? '').split('\n')[0]!.slice(0, 140)}`);
+          else if (item.type === 'agent_message' && type === 'item.completed') { texts.push(String(item.text ?? '')); req.onLog(`💬 ${String(item.text ?? '').split('\n')[0]!.slice(0, 160)}`); }
+          else if (item.type === 'reasoning' && type === 'item.completed') req.onLog(`🧠 ${String(item.text ?? '').split('\n')[0]!.slice(0, 120)}`);
+          else if (item.type === 'file_change' && type === 'item.completed') req.onLog(`✏️  ${(item.changes ?? []).map((c: any) => c.path).join(', ').slice(0, 140)}`);
+        } else if (type === 'error' || type === 'turn.failed') {
+          errorEvent = String(ev.message ?? ev.error?.message ?? JSON.stringify(ev)).slice(0, 500);
+          req.onLog(`❌ ${errorEvent}`);
+        }
+      }
+    };
+
+    const r = await exec([this.cfg.bin, ...args], { cwd: req.cwd, timeoutMs: req.timeoutMs, onOutput, env: { NO_COLOR: '1' } });
+
+    let last = '';
+    try { last = readFileSync(lastPath, 'utf8'); } catch {}
+    rmSync(tmp, { recursive: true, force: true });
+    const output = last ? extractJson(last) : (texts.length ? extractJson(texts[texts.length - 1]!) : null);
+
+    const p = this.cfg.pricing;
+    const nonCached = Math.max(0, usage.input_tokens - usage.cached_input_tokens);
+    const costUsd = (nonCached * p.inputPerM + usage.cached_input_tokens * p.cachedInputPerM + usage.output_tokens * p.outputPerM) / 1_000_000;
+    const exhausted = EXHAUSTED_RE.test((errorEvent ?? '') + '\n' + r.stderr);
+
+    let error: string | null = null;
+    if (r.timedOut) error = `codex timed out after ${Math.round(req.timeoutMs / 60000)} min`;
+    else if (errorEvent) error = `codex error: ${errorEvent}`;
+    else if (r.code !== 0) error = `codex exited ${r.code}: ${tail(r.stderr, 8, 600)}`;
+    else if (output == null) error = 'codex finished without structured output';
+
+    req.onLog(`result: ${error ? 'error' : 'ok'} · ≈$${costUsd.toFixed(3)} (estimated from ${usage.input_tokens + usage.output_tokens} tokens)`);
+    return { output, costUsd, costEstimated: true, durationMs: r.durationMs, exhausted, error, sessionId: null, rawTail: tail(texts.join('\n'), 60, 6000) };
+  }
+}
