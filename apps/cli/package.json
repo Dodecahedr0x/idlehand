@@ -6,7 +6,7 @@
   "bin": { "idlehand": "./src/index.ts" },
   "scripts": {
     "start": "bun src/index.ts",
-    "build": "bun build --compile src/index.ts --outfile dist/idlehand",
+    "build": "bun build --compile src/index.ts --external '*/devtools.js' --outfile dist/idlehand",
     "test": "bun test"
   },
   "dependencies": {

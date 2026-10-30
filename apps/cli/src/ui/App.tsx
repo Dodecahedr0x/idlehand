@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 /** Ink dashboard for `idlehand run` in a TTY. */
 import React, { useEffect, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import { formatBudget, usdCap, type Budget, type BudgetUsage } from '@idlehand/shared';
 import type { Scheduler, SchedulerEvent } from '../scheduler.ts';
@@ -15,24 +15,25 @@ export interface AppProps {
   provider: string;
   repos: string[];
   subscriptionUsd?: number;
-  onExit: () => void;
+  onReady: () => void;
 }
 
 const KIND_LABEL: Record<string, string> = { 'review-pr': 'PR', 'fix-issue': 'ISSUE', 'review-codebase': 'CODE' };
 const OUTCOME_COLOR: Record<string, string> = { reviewed: 'green', merged: 'green', 'pr-opened': 'green', 'issues-filed': 'green', 'nothing-found': 'gray', unverified: 'yellow', failed: 'red' };
 
-export function App({ scheduler, budget, provider, repos, subscriptionUsd, onExit }: AppProps) {
-  const { exit } = useApp();
+export function App({ scheduler, budget, provider, repos, subscriptionUsd, onReady }: AppProps) {
   const [rows, setRows] = useState<Row[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [info, setInfo] = useState<string>('scanning repositories…');
   const [usage, setUsage] = useState<BudgetUsage>({ spentUsd: 0, tasksCompleted: 0, elapsedMs: 0, providerExhausted: false });
   const [done, setDone] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [startedAt] = useState(Date.now);
+  const [now, setNow] = useState(Date.now);
+  const [estimated, setEstimated] = useState(false);
 
   useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -48,30 +49,29 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onExi
         case 'log': setLogs((l) => [...l, e.line].slice(-14)); break;
         case 'task-done':
           setRows((r) => r.map((row) => (row.candidate.target === e.candidate.target && row.candidate.repo === e.candidate.repo ? { ...row, status: 'done', result: e.result } : row)));
-          setUsage(e.usage);
+          setUsage({ ...e.usage });
+          if (e.result.costEstimated) setEstimated(true);
           break;
-        case 'budget': setUsage(e.usage); break;
-        case 'done': setUsage(e.usage); setDone(e.reason); break;
+        case 'budget': setUsage({ ...e.usage }); break;
+        case 'done': setUsage({ ...e.usage }); setDone(e.reason); break;
       }
     };
     scheduler.on('event', handler);
+    onReady();
     return () => { scheduler.off('event', handler); };
-  }, [scheduler]);
-
-  useEffect(() => {
-    if (done) { const t = setTimeout(() => { exit(); onExit(); }, 150); return () => clearTimeout(t); }
-  }, [done]);
+  }, [scheduler, onReady]);
 
   useInput((input, key) => {
     if (input === 'q' || (key.ctrl && input === 'c')) {
-      if (done) { exit(); onExit(); return; }
+      if (done) return;
       setStopping(true);
       scheduler.stop();
     }
   });
 
   const cap = usdCap(budget, subscriptionUsd);
-  const spentStr = `${usage.spentUsd ? '$' + usage.spentUsd.toFixed(2) : '$0.00'}`;
+  const spentStr = `${estimated ? '≈' : ''}$${usage.spentUsd.toFixed(2)}`;
+  const elapsedMs = done ? usage.elapsedMs : Math.max(usage.elapsedMs, now - startedAt);
   const barWidth = 28;
   let bar = '';
   if (cap != null) {
@@ -83,13 +83,13 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onExi
     const filled = Math.round(frac * barWidth);
     bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
   } else if (budget.kind === 'minutes') {
-    const frac = Math.min(1, usage.elapsedMs / (budget.limit * 60000));
+    const frac = Math.min(1, elapsedMs / (budget.limit * 60000));
     const filled = Math.round(frac * barWidth);
     bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
   } else {
     bar = '∞ until the provider says stop';
   }
-  const elapsedMin = Math.floor(usage.elapsedMs / 60000);
+  const elapsed = `${Math.floor(elapsedMs / 60000)}m ${Math.floor(elapsedMs / 1000) % 60}s`;
   const running = rows.find((r) => r.status === 'running');
   const doneRows = rows.filter((r) => r.status === 'done');
   const pendingRows = rows.filter((r) => r.status === 'pending');
@@ -103,7 +103,7 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onExi
           <Text bold color="magenta">idlehand</Text>
           <Text dimColor> · {provider} · {repos.length} repo{repos.length === 1 ? '' : 's'}</Text>
         </Text>
-        <Text dimColor>{stopping && !done ? 'stopping after this task… ' : 'q to stop'}</Text>
+        <Text dimColor>{done ? 'finished' : stopping ? 'stopping after this task… ' : 'q / Ctrl+C to stop after this task'}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         <Text>
@@ -114,7 +114,7 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onExi
           <Text dimColor>  tasks </Text>
           <Text>{usage.tasksCompleted}</Text>
           <Text dimColor>  time </Text>
-          <Text>{elapsedMin}m</Text>
+          <Text>{elapsed}</Text>
         </Text>
         <Text color={cap != null && usage.spentUsd / cap > 0.9 ? 'yellow' : 'magenta'}>{bar}</Text>
       </Box>
@@ -162,7 +162,7 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onExi
 
       {done && (
         <Box marginTop={1} flexDirection="column">
-          <Text bold color="green">done</Text>
+          <Text bold color={doneRows.some((r) => r.result?.outcome === 'failed') ? 'red' : 'green'}>done</Text>
           <Text>{done}</Text>
           {doneRows.filter((r) => r.result?.url).map((r) => (
             <Text key={r.candidate.target + r.candidate.repo} dimColor>  {r.result!.outcome} {r.result!.url}</Text>

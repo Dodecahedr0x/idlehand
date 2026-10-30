@@ -1,0 +1,181 @@
+import { afterEach, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DEFAULT_CONFIG, saveConfig, type Config } from './config.ts';
+import { State } from './state.ts';
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+function fixture(config?: Config) {
+  const root = mkdtempSync(join(tmpdir(), 'idlehand-cli-test-'));
+  roots.push(root);
+  const home = join(root, 'home');
+  const bin = join(root, 'bin');
+  const calls = join(root, 'calls');
+  mkdirSync(bin);
+  if (config) saveConfig(config, join(home, 'config.json'));
+  writeFileSync(join(bin, 'gh'), `#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_CALLS"
+case "$1 $2" in
+  'auth status') exit 0 ;;
+  'api user') printf 'tester\\n' ;;
+  'api repos/'*)
+    if [ "$SLOW_SCAN" = 1 ]; then sleep 0.3; fi
+    printf '%s\\n' '{"full_name":"o/r","default_branch":"main","archived":false}' ;;
+  'pr list'|'issue list') printf '[]\\n' ;;
+  *) exit 90 ;;
+esac
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\nprintf "git %s\\n" "$*" >> "$GH_CALLS"\nexit 90\n', { mode: 0o755 });
+  const env = { ...process.env, IDLEHAND_HOME: home, GH_CALLS: calls, PATH: `${bin}:/usr/bin:/bin` };
+  const spawn = (args: string[], extraEnv: Record<string, string> = {}) => Bun.spawn([process.execPath, join(import.meta.dir, 'index.ts'), ...args], {
+    env: { ...env, ...extraEnv }, stdout: 'pipe', stderr: 'pipe',
+  });
+  const run = async (...args: string[]) => {
+    const proc = spawn(args);
+    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { stdout, stderr, code };
+  };
+  return { home, calls, run, spawn };
+}
+
+function config(): Config {
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.server.url = 'http://127.0.0.1:1';
+  cfg.claude.bin = 'idlehand-test-missing-claude';
+  cfg.codex.bin = 'idlehand-test-missing-codex';
+  cfg.repos = ['o/r'];
+  return cfg;
+}
+
+test('help offers a safe first run, and bare config shows defaults without creating settings', async () => {
+  const f = fixture();
+  for (const args of [[], ['--plain'], ['--help'], ['run', '--help']]) {
+    const r = await f.run(...args);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('--dry-run');
+    expect(r.stdout).toContain("'$2'");
+    expect(r.stderr).toBe('');
+  }
+  const r = await f.run('config', '--json');
+  expect(r.code).toBe(0);
+  expect(JSON.parse(r.stdout)).toEqual(DEFAULT_CONFIG);
+  expect(existsSync(f.home)).toBe(false);
+});
+
+test('invalid arguments fail before tool checks and leave settings alone', async () => {
+  const f = fixture();
+  const cases = [
+    ['run', '--provider', 'typo'],
+    ['run', '--only', 'fix-issues'],
+    ['run', '--only', ''],
+    ['run', '--repo', 'https://github.com/o/r'],
+    ['run', '--repo', '../r'],
+    ['repos', 'add', 'missing-owner'],
+    ['status', '-n', 'nope'],
+    ['status', '--limit', '-1'],
+    ['status', '--limit', '0'],
+    ['run', '--budget', '10%'],
+    ['run', '--budget', '0m'],
+    ['--unknown-option'],
+    ['run', '--unknown-option'],
+  ];
+  for (const args of cases) {
+    const r = await f.run(...args, '--json');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(JSON.parse(r.stderr)).toMatchObject({ type: 'error', message: expect.any(String) });
+  }
+  const typo = await f.run('stats');
+  expect(typo.stderr).toContain('Did you mean status?');
+  expect(typo.stderr).toContain('--help');
+  expect(existsSync(f.home)).toBe(false);
+  expect(existsSync(f.calls)).toBe(false);
+});
+
+test('JSON mode stays parseable across settings and repo mutations, including duplicate selections', async () => {
+  const f = fixture();
+  for (const args of [
+    ['config', 'path'], ['config', 'get', 'provider'], ['config', 'keys'],
+    ['config', 'set', 'budget', '$2'], ['logout'],
+  ]) {
+    const r = await f.run(...args, '--json');
+    expect(r.code).toBe(0);
+    expect(() => JSON.parse(r.stdout)).not.toThrow();
+    expect(r.stderr).toBe('');
+  }
+  expect(JSON.parse((await f.run('repos', 'add', 'o/r', '--json')).stdout)).toEqual({ repo: 'o/r', added: true });
+  expect(JSON.parse((await f.run('repos', 'add', 'o/r', '--json')).stdout)).toEqual({ repo: 'o/r', added: false });
+  expect(JSON.parse((await f.run('repos', 'remove', 'o/r', '--json')).stdout)).toEqual({ repo: 'o/r', removed: true });
+  expect(JSON.parse((await f.run('repos', 'remove', 'o/r', '--json')).stdout)).toEqual({ repo: 'o/r', removed: false });
+});
+
+test('broken settings name the file and explain how to recover without a stack trace', async () => {
+  const f = fixture(config());
+  const path = join(f.home, 'config.json');
+  writeFileSync(path, '{broken');
+  const r = await f.run('config');
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain(path);
+  expect(r.stderr).toContain('move it aside');
+  expect(r.stderr).not.toContain('at loadConfig');
+  expect(readFileSync(path, 'utf8')).toBe('{broken');
+});
+
+test('doctor returns the same failure status in human and JSON output; optional tools do not block', async () => {
+  const cfg = config();
+  const f = fixture(cfg);
+  for (const args of [[], ['--json']]) expect((await f.run('doctor', ...args)).code).toBe(1);
+  cfg.claude.bin = '/bin/echo';
+  saveConfig(cfg, join(f.home, 'config.json'));
+  for (const args of [[], ['--json']]) expect((await f.run('doctor', ...args)).code).toBe(0);
+  cfg.budget = '0m';
+  saveConfig(cfg, join(f.home, 'config.json'));
+  expect((await f.run('doctor', '--json')).code).toBe(1);
+});
+
+test('dry run works without an agent, deduplicates repos, and leaves running tasks and checkouts alone', async () => {
+  const f = fixture(config());
+  mkdirSync(join(f.home, 'repos', 'o', 'r'), { recursive: true });
+  const path = join(f.home, 'state.sqlite');
+  const state = new State(path);
+  state.startTask({ repo: 'o/r', kind: 'fix-issue', target: 'issue:1', provider: 'claude' });
+  state.close();
+  const r = await f.run('run', '--dry-run', '--repo', 'o/r', 'o/r', '--json');
+  expect(r.code).toBe(0);
+  expect(r.stderr).toBe('');
+  const events = r.stdout.trim().split('\n').map((line) => JSON.parse(line));
+  expect(events.find((e) => e.type === 'plan').tasks).toHaveLength(1);
+  expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'dry run: nothing executed', usage: { tasksCompleted: 0, spentUsd: 0 } });
+  const after = new State(path);
+  expect(after.recent()).toHaveLength(1);
+  expect(after.recent()[0]!.outcome).toBe('running');
+  after.close();
+  const calls = readFileSync(f.calls, 'utf8').trim().split('\n');
+  expect(calls.filter((line) => line === 'api repos/o/r')).toHaveLength(1);
+  expect(calls.some((line) => line.startsWith('git '))).toBe(false);
+});
+
+test('Ctrl+C during discovery finishes with a structured stopped message and starts no tasks', async () => {
+  const f = fixture(config());
+  const proc = f.spawn(['run', '--dry-run', '--json'], { SLOW_SCAN: '1' });
+  let stdout = '';
+  let stopped = false;
+  const output = (async () => {
+    for await (const chunk of proc.stdout as unknown as AsyncIterable<Uint8Array>) {
+      stdout += new TextDecoder().decode(chunk);
+      if (!stopped && stdout.includes('scanning o/r')) { stopped = true; proc.kill('SIGINT'); }
+    }
+  })();
+  try {
+    const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text(), output]);
+    expect(code).toBe(0);
+    expect(stderr).toBe('');
+    expect(stopped).toBe(true);
+    const events = stdout.trim().split('\n').map((line) => JSON.parse(line));
+    expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'stopped by user' });
+    expect(events.some((e) => e.type === 'task-start')).toBe(false);
+  } finally { proc.kill(); }
+});

@@ -110,12 +110,17 @@ export class Scheduler extends EventEmitter {
   constructor(private opts: SchedulerOptions) { super(); }
 
   emitEvent(e: SchedulerEvent) { this.emit('event', e); }
-  stop() { this.stopped = true; }
+  stop() {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.emitEvent({ type: 'info', message: 'stopping after the current task; no new tasks will start' });
+  }
 
   async scan(): Promise<{ login: string; scans: RepoScan[] }> {
     const login = await currentLogin();
     const scans: RepoScan[] = [];
     for (const repo of this.opts.repos) {
+      if (this.stopped) break;
       try {
         this.emitEvent({ type: 'info', message: `scanning ${repo}…` });
         const [info, prs, issues] = await Promise.all([repoInfo(repo), listOpenPrs(repo), listOpenIssues(repo)]);
@@ -139,11 +144,18 @@ export class Scheduler extends EventEmitter {
     this.emitEvent({ type: 'budget', usage, verdict: first });
     if (!first.ok) return finish(first.reason);
 
-    const reaped = state.reapRunning();
-    if (reaped) this.emitEvent({ type: 'info', message: `marked ${reaped} interrupted task(s) from a previous run as failed` });
-    for (const r of this.opts.repos) await pruneWorktrees(r);
+    if (this.stopped) return finish('stopped by user');
+    if (!this.opts.dryRun) {
+      const reaped = state.reapRunning();
+      if (reaped) this.emitEvent({ type: 'info', message: `marked ${reaped} interrupted task(s) from a previous run as failed` });
+      for (const r of this.opts.repos) {
+        if (this.stopped) return finish('stopped by user');
+        await pruneWorktrees(r);
+      }
+    }
 
     const { login, scans } = await this.scan();
+    if (this.stopped) return finish('stopped by user');
     const candidates = planCandidates(scans, { login, cfg, state, only: this.opts.only });
     this.emitEvent({ type: 'plan', candidates });
     if (candidates.length === 0) return finish('nothing to do: no unreviewed PRs, no open issues to attempt, codebases reviewed recently');
@@ -186,6 +198,7 @@ export class Scheduler extends EventEmitter {
       reports.push(report);
       this.emitEvent({ type: 'task-done', candidate: c, result, usage });
       if (this.opts.report) await this.opts.report(report).catch((e) => this.emitEvent({ type: 'info', message: `could not report to server: ${(e as Error).message}` }));
+      if (this.stopped) return finish('stopped by user');
       if (this.opts.once) return finish('--once: stopped after one task');
     }
     usage.elapsedMs = Date.now() - startedAt;

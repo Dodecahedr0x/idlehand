@@ -94,7 +94,10 @@ function deepMerge<T>(base: T, patch: unknown): T {
 
 export function loadConfig(path = CONFIG_PATH): Config {
   if (!existsSync(path)) return structuredClone(DEFAULT_CONFIG);
-  const raw = JSON.parse(readFileSync(path, 'utf8'));
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(path, 'utf8')); }
+  catch (e) { throw new Error(`cannot read configuration at ${path}: ${(e as Error).message}. Fix the file or move it aside to use defaults.`); }
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`configuration at ${path} must be a JSON object`);
   return deepMerge(structuredClone(DEFAULT_CONFIG), raw);
 }
 

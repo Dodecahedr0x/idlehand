@@ -8,6 +8,7 @@ const ICON: Record<string, string> = {
 
 export function attachPlain(s: Scheduler, budget: Budget, subscriptionUsd?: number): void {
   const w = (l: string) => process.stdout.write(l + '\n');
+  let estimated = false;
   w(`idlehand · budget ${formatBudget(budget, subscriptionUsd)}`);
   s.on('event', (e: SchedulerEvent) => {
     switch (e.type) {
@@ -19,6 +20,7 @@ export function attachPlain(s: Scheduler, budget: Budget, subscriptionUsd?: numb
       case 'task-start': w(`\n▶ ${e.candidate.repo} — ${e.candidate.label}`); break;
       case 'log': w(`    ${e.line}`); break;
       case 'task-done': {
+        estimated ||= e.result.costEstimated;
         const cost = `${e.result.costEstimated ? '≈' : ''}$${e.result.costUsd.toFixed(3)}`;
         w(`${ICON[e.result.outcome] ?? '·'} ${e.result.outcome} (${cost}, ${Math.round(e.result.durationMs / 1000)}s)${e.result.url ? ` ${e.result.url}` : ''}`);
         if (e.result.outcome === 'failed' || e.result.outcome === 'unverified') w(`    ${e.result.summary.split('\n')[0]}`);
@@ -27,7 +29,7 @@ export function attachPlain(s: Scheduler, budget: Budget, subscriptionUsd?: numb
       case 'budget': if (!e.verdict.ok) w(`budget: ${e.verdict.reason}`); break;
       case 'done':
         w(`\ndone: ${e.reason}`);
-        w(`spent ${e.usage.spentUsd ? '$' + e.usage.spentUsd.toFixed(3) : '$0'} over ${e.usage.tasksCompleted} task(s) in ${Math.round(e.usage.elapsedMs / 60000)} min`);
+        w(`spent ${estimated ? '≈' : ''}$${e.usage.spentUsd.toFixed(3)} over ${e.usage.tasksCompleted} task(s) in ${Math.round(e.usage.elapsedMs / 1000)}s`);
         break;
     }
   });

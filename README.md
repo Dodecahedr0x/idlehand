@@ -55,6 +55,7 @@ bun run cli run --budget '$2'
 ```
 
 To build a standalone binary: `bun run --cwd apps/cli build` writes `apps/cli/dist/idlehand`.
+The standalone build excludes Ink's optional React DevTools connection.
 
 Without the web service, add repos locally: `idlehand repos add owner/name`.
 
@@ -66,17 +67,21 @@ idlehand logout
 idlehand config show|get|set|keys    settings live in ~/.idlehand/config.json
 idlehand repos [list|add|remove]     selections from the server plus local repos
 idlehand run [options]               spend the budget
-    -b, --budget   "$10" | "10%" | "3 tasks" | "45m" | "remaining"
+    -b, --budget   '$10' | '10%' | '3 tasks' | '45m' | 'remaining'
     -p, --provider claude | codex
     -r, --repo     owner/name ...      restrict this run
     --only         review-pr,fix-issue,review-codebase
     --once         stop after one task
     --dry-run      plan only
-idlehand status                      spend this month and recent tasks
+idlehand status [--limit 15]         spend this month and recent tasks (-n also works)
 idlehand doctor                      environment checks
 ```
 
-Global flags: `--plain` for line output, `--json` for one JSON record per line. Without a TTY the CLI picks `--plain` automatically.
+Run `idlehand` for a quick start, or `idlehand <command> --help` for examples. Bare `idlehand config` shows the effective settings, with the token redacted. Quote dollar budgets with **single quotes** (for example, `--budget '$2'`) so the shell does not expand the dollar sign.
+
+Global flags: `--plain` for line output, `--json` for one JSON value per line. Without terminal input and output the CLI picks `--plain` automatically. In JSON mode, errors and warnings are JSON records on stderr, leaving stdout available for command results and run events. Exit codes are `0` for success, `1` for a command or setup error, and `2` when one or more run tasks failed. `doctor` uses the same exit status in human and JSON modes; an unavailable server or unselected provider is optional.
+
+Use `--dry-run` to preview the queue using your GitHub login. It does not require Claude Code or Codex, spend credits, change saved task outcomes, or prune checkouts. During a run, press **Ctrl+C** (or **q** in the dashboard) to stop after the current task finishes; no further tasks start. The dashboard shows live elapsed time and marks estimated spending with `≈`.
 
 Useful settings (`idlehand config keys` lists them all):
 
