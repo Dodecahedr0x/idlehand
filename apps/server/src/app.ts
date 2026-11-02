@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { ServerConfig } from './config.ts';
 import type { Store, UserRow } from './db.ts';
 import type { GitHubClient } from './github.ts';
-import { readSessionUserId, type SessionOpts } from './session.ts';
+import { readSession, type SessionOpts } from './session.ts';
 import { authRoutes } from './routes/auth.tsx';
 import { apiRoutes } from './routes/api.ts';
 import { Message } from './pages/Message.tsx';
@@ -30,8 +30,9 @@ export function createApp(deps: AppDeps) {
   app.use('*', async (c, next) => {
     c.set('deps', deps);
     c.set('session', session);
-    const uid = await readSessionUserId(c, session);
-    c.set('user', uid == null ? null : deps.store.getUser(uid));
+    const payload = await readSession(c, session);
+    const row = payload == null ? null : deps.store.getUser(payload.userId);
+    c.set('user', payload && row && row.session_version === payload.version ? row : null);
     c.header('Cache-Control', 'no-store');
     await next();
   });

@@ -1,3 +1,4 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { Database } from 'bun:sqlite';
 import type { Me, PopularRepo, RepoCard, RunReport, SelectedRepo, StoredRunReport, TaskOutcome } from '@idlehand/shared';
 
@@ -7,6 +8,7 @@ export interface UserRow {
   name: string | null;
   avatar_url: string | null;
   access_token: string | null;
+  session_version: number;
   created_at: string;
 }
 
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   avatar_url TEXT,
   access_token TEXT,
+  session_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE TABLE IF NOT EXISTS repos (
@@ -87,7 +90,9 @@ CREATE TABLE IF NOT EXISTS cli_tokens (
   user_id INTEGER NOT NULL REFERENCES users(id),
   label TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  last_used_at TEXT
+  last_used_at TEXT,
+  expires_at TEXT,
+  revoked_at TEXT
 );
 CREATE TABLE IF NOT EXISTS run_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,8 +114,35 @@ CREATE INDEX IF NOT EXISTS idx_run_reports_user ON run_reports(user_id, created_
 CREATE INDEX IF NOT EXISTS idx_run_reports_repo ON run_reports(repo_full_name, created_at DESC);
 `;
 
+export const CLI_TOKEN_TTL_MS = 60 * 60 * 24 * 30 * 1000;
+const SEALED_TOKEN_PREFIX = 'enc:';
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function tokenKey(secret: string): Buffer {
+  return createHash('sha256').update('idlehand.access_token.v1\0').update(secret).digest();
+}
+
+function sealToken(plaintext: string, key: Buffer): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return `${SEALED_TOKEN_PREFIX}${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${enc.toString('base64url')}`;
+}
+
+function openToken(stored: string, key: Buffer): string | null {
+  if (!stored.startsWith(SEALED_TOKEN_PREFIX)) return stored;
+  const [ivB64, tagB64, dataB64] = stored.slice(SEALED_TOKEN_PREFIX.length).split('.');
+  if (!ivB64 || !tagB64 || !dataB64) return null;
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
 }
 
 function randomHex(bytes: number): string {
@@ -147,14 +179,48 @@ export function userToMe(u: UserRow): Me {
 
 export class Store {
   readonly db: Database;
+  private readonly tokenKey: Buffer | null;
 
-  constructor(path: string = ':memory:') {
+  constructor(path: string = ':memory:', tokenSecret = '') {
     this.db = new Database(path, { create: true });
+    this.tokenKey = tokenSecret ? tokenKey(tokenSecret) : null;
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.db.exec(SCHEMA);
-    if (!(this.db.query('PRAGMA table_info(run_reports)').all() as { name: string }[]).some((c) => c.name === 'cost_unknown')) {
-      this.db.exec('ALTER TABLE run_reports ADD COLUMN cost_unknown INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('run_reports', 'cost_unknown', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('users', 'session_version', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('cli_tokens', 'expires_at', 'TEXT');
+    this.ensureColumn('cli_tokens', 'revoked_at', 'TEXT');
+    this.resealPlaintextTokens();
+  }
+
+  private resealPlaintextTokens(): void {
+    if (!this.tokenKey) return;
+    const rows = this.db
+      .query<{ id: number; access_token: string }, []>("SELECT id, access_token FROM users WHERE access_token IS NOT NULL AND access_token NOT LIKE 'enc:%'")
+      .all();
+    for (const row of rows) {
+      this.db.query('UPDATE users SET access_token = ? WHERE id = ?').run(sealToken(row.access_token, this.tokenKey), row.id);
     }
+  }
+
+  private ensureColumn(table: string, name: string, spec: string): void {
+    if ((this.db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === name)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${spec}`);
+  }
+
+  private encodeAccessToken(token: string | null): string | null {
+    if (token == null) return null;
+    return this.tokenKey ? sealToken(token, this.tokenKey) : token;
+  }
+
+  private decodeAccessToken(stored: string | null): string | null {
+    if (stored == null) return null;
+    return this.tokenKey ? openToken(stored, this.tokenKey) : stored;
+  }
+
+  private hydrateUser(row: UserRow | null): UserRow | null {
+    if (!row) return null;
+    return { ...row, session_version: row.session_version ?? 0, access_token: this.decodeAccessToken(row.access_token) };
   }
 
   close(): void {
@@ -170,12 +236,21 @@ export class Store {
          ON CONFLICT(id) DO UPDATE SET login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url,
            access_token = COALESCE(excluded.access_token, users.access_token)`,
       )
-      .run(u.id, u.login, u.name, u.avatarUrl, u.accessToken);
+      .run(u.id, u.login, u.name, u.avatarUrl, this.encodeAccessToken(u.accessToken));
     return this.getUser(u.id)!;
   }
 
   getUser(id: number): UserRow | null {
-    return this.db.query<UserRow, [number]>('SELECT * FROM users WHERE id = ?').get(id) ?? null;
+    return this.hydrateUser(this.db.query<UserRow, [number]>('SELECT * FROM users WHERE id = ?').get(id) ?? null);
+  }
+
+  clearAccessToken(userId: number): void {
+    this.db.query('UPDATE users SET access_token = NULL WHERE id = ?').run(userId);
+  }
+
+  bumpSessionVersion(userId: number): number {
+    this.db.query('UPDATE users SET session_version = session_version + 1 WHERE id = ?').run(userId);
+    return this.getUser(userId)?.session_version ?? 0;
   }
 
   /* ---- repos ---- */
@@ -296,9 +371,10 @@ export class Store {
     return row;
   }
 
-  approveDeviceCode(deviceCode: string, userId: number, label: string): string {
+  approveDeviceCode(deviceCode: string, userId: number, label: string, ttlMs = CLI_TOKEN_TTL_MS): string {
     const token = randomHex(32);
-    this.db.query('INSERT INTO cli_tokens (token, user_id, label) VALUES (?, ?, ?)').run(token, userId, label);
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    this.db.query('INSERT INTO cli_tokens (token, user_id, label, expires_at) VALUES (?, ?, ?, ?)').run(token, userId, label, expiresAt);
     this.db
       .query('UPDATE device_codes SET status = ?, user_id = ?, token = ? WHERE device_code = ?')
       .run('approved', userId, token, deviceCode);
@@ -317,15 +393,30 @@ export class Store {
   /* ---- cli tokens ---- */
 
   userForCliToken(token: string): UserRow | null {
-    const row = this.db.query<{ user_id: number }, [string]>('SELECT user_id FROM cli_tokens WHERE token = ?').get(token);
-    if (!row) return null;
+    const row = this.db
+      .query<{ user_id: number; expires_at: string | null; revoked_at: string | null }, [string]>(
+        'SELECT user_id, expires_at, revoked_at FROM cli_tokens WHERE token = ?',
+      )
+      .get(token);
+    if (!row || row.revoked_at) return null;
+    if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
     this.db.query('UPDATE cli_tokens SET last_used_at = ? WHERE token = ?').run(nowIso(), token);
     return this.getUser(row.user_id);
   }
 
+  revokeCliToken(token: string): boolean {
+    const res = this.db.query('UPDATE cli_tokens SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL').run(nowIso(), token);
+    return res.changes > 0;
+  }
+
   getSetupStatus(userId: number): { cliConnected: boolean; contributionOutcome: TaskOutcome | null } {
     // Approval alone does not confirm the CLI received and used its token.
-    const cliConnected = !!this.db.query('SELECT 1 FROM cli_tokens WHERE user_id = ? AND last_used_at IS NOT NULL LIMIT 1').get(userId);
+    const cliConnected = !!this.db
+      .query(
+        `SELECT 1 FROM cli_tokens WHERE user_id = ? AND last_used_at IS NOT NULL AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > ?) LIMIT 1`,
+      )
+      .get(userId, nowIso());
     const result = this.db.query<{ outcome: TaskOutcome }, [number]>(
       `SELECT outcome FROM run_reports WHERE user_id = ?
        ORDER BY CASE WHEN outcome IN ('reviewed', 'merged', 'pr-opened', 'issues-filed') THEN 0 ELSE 1 END, id DESC LIMIT 1`,
