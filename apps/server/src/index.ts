@@ -4,7 +4,7 @@ import { Store } from './db.ts';
 import { RealGitHubClient } from './github.ts';
 
 const config = configFromEnv();
-const store = new Store(config.dbPath);
+const store = new Store(config.dbPath, config.sessionSecret);
 const github = new RealGitHubClient(config.githubClientId, config.githubClientSecret);
 const app = createApp({ config, store, github });
 

@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 export const SESSION_COOKIE = 'idlehand_session';
 export const STATE_COOKIE = 'idlehand_oauth_state';
+export const SESSION_MAX_AGE_MS = 60 * 60 * 24 * 30 * 1000;
 
 const enc = new TextEncoder();
 
@@ -45,22 +46,38 @@ export interface SessionOpts {
   secure: boolean;
 }
 
-export async function setSession(c: Context, opts: SessionOpts, userId: number): Promise<void> {
-  const payload = `${userId}:${Date.now()}`;
+export interface SessionPayload {
+  userId: number;
+  issuedAt: number;
+  version: number;
+}
+
+export async function setSession(c: Context, opts: SessionOpts, userId: number, version = 0): Promise<void> {
+  const payload = `${userId}:${Date.now()}:${version}`;
   setCookie(c, SESSION_COOKIE, await signValue(opts.secret, payload), {
     httpOnly: true,
     sameSite: 'Lax',
     secure: opts.secure,
     path: '/',
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: SESSION_MAX_AGE_MS / 1000,
   });
 }
 
-export async function readSessionUserId(c: Context, opts: SessionOpts): Promise<number | null> {
+export async function readSession(c: Context, opts: SessionOpts): Promise<SessionPayload | null> {
   const value = await verifyValue(opts.secret, getCookie(c, SESSION_COOKIE));
   if (!value) return null;
-  const id = Number(value.split(':')[0]);
-  return Number.isFinite(id) && id > 0 ? id : null;
+  const [idPart, tsPart, verPart] = value.split(':');
+  const userId = Number(idPart);
+  const issuedAt = Number(tsPart);
+  const version = verPart == null || verPart === '' ? 0 : Number(verPart);
+  if (!Number.isFinite(userId) || userId <= 0 || !Number.isFinite(issuedAt) || !Number.isFinite(version)) return null;
+  if (Date.now() - issuedAt > SESSION_MAX_AGE_MS) return null;
+  return { userId, issuedAt, version };
+}
+
+export async function readSessionUserId(c: Context, opts: SessionOpts): Promise<number | null> {
+  const session = await readSession(c, opts);
+  return session?.userId ?? null;
 }
 
 export function clearSession(c: Context): void {

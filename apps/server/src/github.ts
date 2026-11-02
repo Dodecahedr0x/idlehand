@@ -14,6 +14,7 @@ export interface GitHubClient {
   listPublicReposFor(login: string, page: number): Promise<RepoInput[]>;
   getRepo(owner: string, name: string, token?: string | null): Promise<RepoInput | null>;
   searchRepos(q: string, token?: string | null): Promise<RepoInput[]>;
+  revokeAccessToken?(token: string): Promise<void>;
 }
 
 export class GitHubError extends Error {
@@ -109,5 +110,21 @@ export class RealGitHubClient implements GitHubClient {
   async searchRepos(q: string, token?: string | null): Promise<RepoInput[]> {
     const data = await this.api<{ items: ApiRepo[] }>(`/search/repositories?q=${encodeURIComponent(q)}&per_page=20`, token);
     return data.items.map(apiRepoToInput);
+  }
+
+  async revokeAccessToken(token: string): Promise<void> {
+    const res = await fetch(`${this.apiBase}/applications/${encodeURIComponent(this.clientId)}/token`, {
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'idlehand',
+        'X-GitHub-Api-Version': '2022-11-28',
+        Authorization: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')}`,
+      },
+      body: JSON.stringify({ access_token: token }),
+    });
+    if (res.ok || res.status === 404) return;
+    throw new GitHubError(`GitHub revoke -> ${res.status}`, res.status);
   }
 }

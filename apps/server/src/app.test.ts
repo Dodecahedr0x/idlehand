@@ -29,6 +29,8 @@ class FakeGitHub implements GitHubClient {
     'tok-alice': { id: 1, login: 'alice', name: 'Alice', avatarUrl: null },
     'tok-bob': { id: 2, login: 'bob', name: null, avatarUrl: null },
   };
+  revoked: string[] = [];
+  revokeError: Error | null = null;
   async exchangeCode(code: string) {
     return `tok-${code}`;
   }
@@ -36,6 +38,10 @@ class FakeGitHub implements GitHubClient {
     const u = this.users[token];
     if (!u) throw new Error('bad token');
     return u;
+  }
+  async revokeAccessToken(token: string) {
+    if (this.revokeError) throw this.revokeError;
+    this.revoked.push(token);
   }
   async listUserRepos(_token: string, page: number) {
     return page === 1 ? REPOS.slice(0, 2) : [];
@@ -52,10 +58,12 @@ class FakeGitHub implements GitHubClient {
 }
 
 let store: Store;
+let github: FakeGitHub;
 let app: ReturnType<typeof createApp>;
 
-async function cookieFor(userId: number) {
-  return `${SESSION_COOKIE}=${await signValue(config.sessionSecret, `${userId}:0`)}`;
+async function cookieFor(userId: number, issuedAt = Date.now()) {
+  const version = store.getUser(userId)?.session_version ?? 0;
+  return `${SESSION_COOKIE}=${await signValue(config.sessionSecret, `${userId}:${issuedAt}:${version}`)}`;
 }
 
 function req(path: string, init: RequestInit & { cookie?: string; bearer?: string; json?: unknown } = {}) {
@@ -71,8 +79,9 @@ function req(path: string, init: RequestInit & { cookie?: string; bearer?: strin
 }
 
 beforeEach(() => {
-  store = new Store(':memory:');
-  app = createApp({ config, store, github: new FakeGitHub() });
+  store = new Store(':memory:', config.sessionSecret);
+  github = new FakeGitHub();
+  app = createApp({ config, store, github });
   store.upsertUser({ id: 1, login: 'alice', name: 'Alice', avatarUrl: null, accessToken: 'tok-alice' });
   store.upsertUser({ id: 2, login: 'bob', name: null, avatarUrl: null, accessToken: 'tok-bob' });
 });
@@ -460,5 +469,60 @@ describe('sign-in recovery', () => {
     const code = store.createDeviceCode(-1000);
     const expired = await (await req(`/cli/approve?code=${code.user_code}`, { cookie })).text();
     expect(expired).toContain('This code has expired.');
+  });
+});
+
+describe('session lifetime and logout', () => {
+  test('copied session cookie is rejected after its server-side lifetime', async () => {
+    const stale = await cookieFor(1, Date.now() - 31 * 24 * 60 * 60 * 1000);
+    expect((await req('/api/me', { cookie: stale })).status).toBe(401);
+    expect((await req('/api/me', { cookie: await cookieFor(1) })).status).toBe(200);
+  });
+
+  test('logout invalidates the current session so a copied cookie is rejected', async () => {
+    const cookie = await cookieFor(1);
+    expect((await req('/api/me', { cookie })).status).toBe(200);
+    const res = await app.request('http://localhost/logout', { method: 'POST', headers: { cookie }, redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect((await req('/api/me', { cookie })).status).toBe(401);
+    expect((await req('/api/me', { cookie: await cookieFor(1) })).status).toBe(200);
+  });
+
+  test('logout revokes the GitHub token when GitHub still accepts revocation', async () => {
+    const cookie = await cookieFor(1);
+    await app.request('http://localhost/logout', { method: 'POST', headers: { cookie }, redirect: 'manual' });
+    expect(github.revoked).toEqual(['tok-alice']);
+    expect(store.getUser(1)?.access_token).toBeNull();
+  });
+
+  test('logout still clears the token when GitHub rejects revocation', async () => {
+    github.revokeError = new Error('GitHub revoke -> 503');
+    const cookie = await cookieFor(1);
+    const res = await app.request('http://localhost/logout', { method: 'POST', headers: { cookie }, redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(store.getUser(1)?.access_token).toBeNull();
+  });
+
+  test('a copy of the database does not yield a usable GitHub access token', () => {
+    const raw = store.db.query<{ access_token: string | null }, [number]>('SELECT access_token FROM users WHERE id = ?').get(1);
+    expect(raw?.access_token).not.toBe('tok-alice');
+    expect(raw?.access_token).toBeTruthy();
+    expect(store.getUser(1)?.access_token).toBe('tok-alice');
+  });
+});
+
+describe('CLI token expiry and revocation', () => {
+  test('revoked CLI token gets 401 from /api/cli/me', async () => {
+    const token = store.approveDeviceCode(store.createDeviceCode(60000).device_code, 1, 'test');
+    expect((await req('/api/cli/me', { bearer: token })).status).toBe(200);
+    expect(store.revokeCliToken(token)).toBe(true);
+    expect((await req('/api/cli/me', { bearer: token })).status).toBe(401);
+  });
+
+  test('expired CLI token gets 401 from /api/cli/me', async () => {
+    const token = store.approveDeviceCode(store.createDeviceCode(60000).device_code, 1, 'test');
+    expect((await req('/api/cli/me', { bearer: token })).status).toBe(200);
+    store.db.query('UPDATE cli_tokens SET expires_at = ? WHERE token = ?').run('2000-01-01T00:00:00.000Z', token);
+    expect((await req('/api/cli/me', { bearer: token })).status).toBe(401);
   });
 });

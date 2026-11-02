@@ -34,7 +34,7 @@ export function authRoutes() {
       const token = await github.exchangeCode(code);
       const ghUser = await github.getUser(token);
       const user = store.upsertUser({ id: ghUser.id, login: ghUser.login, name: ghUser.name, avatarUrl: ghUser.avatarUrl, accessToken: token });
-      await setSession(c, c.get('session'), user.id);
+      await setSession(c, c.get('session'), user.id, user.session_version);
       return c.redirect(next);
     } catch {
       return c.html(<Message title="We couldn’t connect to GitHub." description="Your sign-in could not be completed. Please try again in a moment; you’ll return to where you left off." href={retry} action="Try sign-in again" />, 502);
@@ -59,11 +59,25 @@ export function authRoutes() {
       const row = store.upsertRepo(input ?? { owner, name, description: null, htmlUrl: `https://github.com/${full}`, private: false, defaultBranch: null, language: null, stars: 0 });
       store.addSelection(user.id, row.id);
     }
-    await setSession(c, c.get('session'), user.id);
+    await setSession(c, c.get('session'), user.id, user.session_version);
     return c.redirect(safeNext(c.req.query('next')));
   });
 
-  const logout = (c: any) => {
+  const logout = async (c: any) => {
+    const { store, github } = c.get('deps');
+    const user = c.get('user');
+    if (user) {
+      const token = user.access_token;
+      store.clearAccessToken(user.id);
+      store.bumpSessionVersion(user.id);
+      if (token && github.revokeAccessToken) {
+        try {
+          await github.revokeAccessToken(token);
+        } catch {
+          // GitHub no longer accepts this token; the local copy is already gone.
+        }
+      }
+    }
     clearSession(c);
     return c.redirect('/');
   };
