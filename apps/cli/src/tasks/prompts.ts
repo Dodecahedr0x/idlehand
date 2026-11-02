@@ -10,7 +10,7 @@ const CONTRACT = `
 - Non-interactive only: never start servers, watchers, or prompts that wait for input. Add timeouts to anything that could hang.
 - Do not access the network except to install the project's declared dependencies.
 - Do not modify or delete files outside this checkout.
-- The runner independently verifies commands in an offline OS sandbox, without personal credentials or home-directory access. Include self-contained \`reproduction.setup\` commands to recreate every needed scratch file and fixture on a fresh checkout. The runner never copies your scratch files. Verification setup cannot download dependencies; commands needing unavailable dependencies cannot be verified.
+- The runner independently verifies commands in an OS sandbox. The sandbox can reach the public internet, so \`reproduction.setup\` may install the project's declared dependencies. It has no credentials, no home directory, and cannot read or write outside the checkout. On macOS it cannot contact localhost. Include self-contained setup commands for every scratch file; the runner never copies your scratch files.
 - When unsure, say so in the notes rather than guessing.
 - Your FINAL message must be only the JSON object matching the required schema.`.trim();
 

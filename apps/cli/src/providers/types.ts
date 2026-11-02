@@ -1,5 +1,7 @@
 import type { Provider } from '@idlehand/shared';
 
+const BUDGET_LABEL: Record<Provider, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
+
 export interface AgentRunRequest {
   cwd: string;
   prompt: string;
@@ -39,7 +41,7 @@ export function providerBudgetError(provider: AgentProvider, cap: number | null)
   if (cap == null) return null;
   if (!Number.isFinite(cap) || cap <= 0) return 'dollar budget must be a positive finite number';
   return provider.supportsUsdBudget === false
-    ? 'Codex cannot enforce dollar or percent budgets. Use --provider claude, or explicitly choose --budget "3 tasks", "45m", or "remaining" (no dollar cap).'
+    ? `${BUDGET_LABEL[provider.name]} cannot enforce dollar or percent budgets. Use --provider claude, or explicitly choose --budget "3 tasks", "45m", or "remaining" (no dollar cap).`
     : null;
 }
 

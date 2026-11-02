@@ -57,7 +57,8 @@ export type DeviceCodePoll =
 /* ---- Run reports (CLI -> server) ---- */
 
 export type TaskKind = 'review-pr' | 'fix-issue' | 'review-codebase';
-export type Provider = 'claude' | 'codex';
+export const PROVIDERS = ['claude', 'codex', 'cursor'] as const;
+export type Provider = (typeof PROVIDERS)[number];
 
 export type TaskOutcome =
   | 'reviewed' // a PR review was posted

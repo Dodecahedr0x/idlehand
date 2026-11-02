@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DEFAULT_CONFIG } from '../config.ts';
 import { ClaudeProvider } from './claude.ts';
 import { CodexProvider } from './codex.ts';
+import { CursorProvider } from './cursor.ts';
 import type { AgentRunRequest } from './types.ts';
 
 const roots: string[] = [];
@@ -19,6 +20,7 @@ function fixture(script: string) {
   const cfg = structuredClone(DEFAULT_CONFIG);
   cfg.claude.bin = bin;
   cfg.codex.bin = bin;
+  cfg.cursor.bin = bin;
   const request: AgentRunRequest = { cwd: root, prompt: 'fixture', schema: { type: 'object' }, maxBudgetUsd: 0.01, timeoutMs: 2000, onLog: () => {} };
   return { cfg, request, calls };
 }
@@ -78,6 +80,68 @@ test('Claude keeps a reported charge when the process later times out', async ()
   const result = await new ClaudeProvider(f.cfg.claude).run({ ...f.request, timeoutMs: 300 });
   expect(result.costUsd).toBe(0.005);
   expect(result.error).toContain('timed out');
+});
+
+const cursorResult = (over: Record<string, unknown> = {}) => JSON.stringify({
+  type: 'result', subtype: 'success', is_error: false, result: '{"ok":true}', session_id: 'sess-1',
+  usage: { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  ...over,
+});
+
+test('Cursor refuses any dollar threshold without starting the process', async () => {
+  const f = fixture('throw new Error("must never run");');
+  for (const cap of [0.01, 10, 0, -1, Infinity, NaN]) {
+    const result = await new CursorProvider(f.cfg.cursor).run({ ...f.request, maxBudgetUsd: cap });
+    expect(result.error).toContain(cap > 0 && Number.isFinite(cap) ? 'Cursor cannot enforce' : 'positive finite');
+    expect(result.costUsd).toBe(0);
+    expect(existsSync(f.calls)).toBe(false);
+  }
+});
+
+test('Cursor trusts the workspace, appends the schema, and prices reported tokens', async () => {
+  const events = [
+    { type: 'system', subtype: 'init', session_id: 'sess-1', model: 'Composer' },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Reading the repo' }] } },
+    { type: 'tool_call', subtype: 'started', tool_call: { shellToolCall: { args: { command: 'bun test' } } } },
+    JSON.parse(cursorResult({ usage: { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 } })),
+  ].map((ev) => JSON.stringify(ev)).join('\n');
+  const logs: string[] = [];
+  const f = fixture(`process.stdout.write(${JSON.stringify(events)});`);
+  f.cfg.cursor.model = 'composer-2';
+  const result = await new CursorProvider(f.cfg.cursor).run({ ...f.request, maxBudgetUsd: null, schema: { type: 'object', properties: { ok: { type: 'boolean' } } }, onLog: (line) => logs.push(line) });
+  expect(result.error).toBeNull();
+  expect(result.output).toEqual({ ok: true });
+  expect(result.costUsd).toBe(3 + 15 + 0.3 + 3.75);
+  expect(result.costEstimated).toBe(true);
+  expect(result.costUnknown).toBe(false);
+  expect(result.sessionId).toBe('sess-1');
+  const args = JSON.parse(readFileSync(f.calls, 'utf8')) as string[];
+  expect(args).toContain('--print');
+  expect(args).toContain('--force');
+  expect(args).toContain('--trust');
+  expect(args[args.indexOf('--workspace') + 1]).toBe(f.request.cwd);
+  expect(args[args.indexOf('--model') + 1]).toBe('composer-2');
+  expect(args.at(-1)).toContain('"properties":{"ok":{"type":"boolean"}}');
+  expect(logs.some((line) => line.includes('shell bun test'))).toBe(true);
+  expect(logs.some((line) => line.startsWith('💬 Reading'))).toBe(true);
+});
+
+test('Cursor marks missing or invalid token usage unknown and keeps a reported estimate after failure', async () => {
+  const missing = fixture(`process.stdout.write(${JSON.stringify(cursorResult({ usage: undefined }))});`);
+  const unknown = await new CursorProvider(missing.cfg.cursor).run({ ...missing.request, maxBudgetUsd: null });
+  expect(unknown.costUnknown).toBe(true);
+  expect(unknown.error).toContain('usage is unknown');
+  const invalid = fixture(`process.stdout.write(${JSON.stringify(cursorResult({ usage: { inputTokens: -1, outputTokens: 1 } }))});`);
+  expect((await new CursorProvider(invalid.cfg.cursor).run({ ...invalid.request, maxBudgetUsd: null })).costUnknown).toBe(true);
+  const failed = fixture(`process.stdout.write(${JSON.stringify(cursorResult())}); process.exitCode = 1;`);
+  const failure = await new CursorProvider(failed.cfg.cursor).run({ ...failed.request, maxBudgetUsd: null });
+  expect(failure.costUsd).toBe(3);
+  expect(failure.costUnknown).toBe(true);
+  expect(failure.error).toContain('exited 1');
+  const prices = fixture('throw new Error("must never run");');
+  prices.cfg.cursor.pricing.outputPerM = Number.NaN;
+  expect((await new CursorProvider(prices.cfg.cursor).run({ ...prices.request, maxBudgetUsd: null })).error).toContain('token prices');
+  expect(existsSync(prices.calls)).toBe(false);
 });
 
 test('uncapped Codex prices trailing completed-turn usage without requiring a final newline', async () => {

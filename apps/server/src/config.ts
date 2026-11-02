@@ -7,6 +7,8 @@ export interface ServerConfig {
   sessionSecret: string;
   dbPath: string;
   devLogin: boolean;
+  /** owner/name repos selected for every dev-login user. */
+  devRepos: string[];
 }
 
 export function configFromEnv(env: Record<string, string | undefined> = process.env): ServerConfig {
@@ -34,5 +36,6 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sessionSecret,
     dbPath: env.DB_PATH ?? './idlehand.sqlite',
     devLogin: env.IDLEHAND_DEV_LOGIN === '1',
+    devRepos: (env.IDLEHAND_DEV_REPO ?? '').split(',').map((s) => s.trim()).filter((s) => /^[\w.-]+\/[\w.-]+$/.test(s)),
   };
 }

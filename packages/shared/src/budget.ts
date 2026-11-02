@@ -3,8 +3,8 @@
  * displays what a node reported).
  *
  * A budget is always reduced to something the runner can measure per task:
- *   - dollars  : Claude Code reports `total_cost_usd` per headless run; Codex
- *                reports token usage which we price with a configurable table.
+ *   - dollars  : Claude Code reports `total_cost_usd` per headless run. Codex and
+ *                the Cursor CLI report token usage, priced with a configurable table.
  *   - tasks    : number of completed agent tasks.
  *   - minutes  : wall-clock time.
  *   - remaining: no cap of our own; keep going until the provider refuses

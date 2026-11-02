@@ -14,7 +14,7 @@ bun run --cwd apps/server dev                  # http://localhost:8787
 ## Local testing without a GitHub OAuth app
 
 ```sh
-IDLEHAND_DEV_LOGIN=1 bun run --cwd apps/server dev
+IDLEHAND_DEV_LOGIN=1 IDLEHAND_DEV_REPO=owner/name bun run --cwd apps/server dev
 open http://localhost:8787/auth/dev?login=octocat
 ```
 

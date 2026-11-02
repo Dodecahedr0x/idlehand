@@ -43,7 +43,7 @@ export function authRoutes() {
 
   // Dev-only login without OAuth so the UI can be exercised locally.
   r.get('/auth/dev', async (c) => {
-    const { config, store } = c.get('deps');
+    const { config, store, github } = c.get('deps');
     if (!config.devLogin) return c.text('Not found', 404);
     const login = (c.req.query('login') ?? 'octocat').replace(/[^A-Za-z0-9-]/g, '');
     if (!login) return c.text('bad login', 400);
@@ -52,6 +52,13 @@ export function authRoutes() {
     for (const ch of login) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
     const id = 900_000_000 + (hash % 90_000_000);
     const user = store.upsertUser({ id, login, name: login, avatarUrl: `https://github.com/${login}.png`, accessToken: null });
+    for (const full of config.devRepos) {
+      const [owner, name] = full.split('/') as [string, string];
+      let input = null;
+      try { input = await github.getRepo(owner, name, null); } catch { input = null; }
+      const row = store.upsertRepo(input ?? { owner, name, description: null, htmlUrl: `https://github.com/${full}`, private: false, defaultBranch: null, language: null, stars: 0 });
+      store.addSelection(user.id, row.id);
+    }
     await setSession(c, c.get('session'), user.id);
     return c.redirect(safeNext(c.req.query('next')));
   });

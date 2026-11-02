@@ -1,12 +1,12 @@
 import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
-import type { RunReport, DeviceCodeStart, DeviceCodePoll } from '@idlehand/shared';
+import { PROVIDERS, type RunReport, type DeviceCodeStart, type DeviceCodePoll } from '@idlehand/shared';
 import type { AppEnv } from '../app.ts';
 import { repoRowToCard, userToMe, type RepoInput, type UserRow } from '../db.ts';
 
 const DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
 const KINDS = new Set(['review-pr', 'fix-issue', 'review-codebase']);
-const PROVIDERS = new Set(['claude', 'codex']);
+const PROVIDER_NAMES = new Set<string>(PROVIDERS);
 const OUTCOMES = new Set(['reviewed', 'merged', 'pr-opened', 'issues-filed', 'nothing-found', 'unverified', 'failed']);
 
 /** Cookie-session guard with a cheap CSRF check for mutations. */
@@ -175,7 +175,7 @@ function validateRunReport(b: Partial<RunReport> | null): string | null {
   if (!b || typeof b !== 'object') return 'body must be a JSON RunReport';
   if (!b.repo || typeof b.repo.owner !== 'string' || typeof b.repo.name !== 'string') return 'repo.owner and repo.name required';
   if (!b.kind || !KINDS.has(b.kind)) return `kind must be one of ${[...KINDS].join(', ')}`;
-  if (!b.provider || !PROVIDERS.has(b.provider)) return `provider must be one of ${[...PROVIDERS].join(', ')}`;
+  if (!b.provider || !PROVIDER_NAMES.has(b.provider)) return `provider must be one of ${PROVIDERS.join(', ')}`;
   if (!b.outcome || !OUTCOMES.has(b.outcome)) return `outcome must be one of ${[...OUTCOMES].join(', ')}`;
   if (typeof b.summary !== 'string') return 'summary required';
   if (b.costUnknown !== undefined && typeof b.costUnknown !== 'boolean') return 'costUnknown must be a boolean';

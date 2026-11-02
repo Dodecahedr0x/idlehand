@@ -27,16 +27,23 @@ export async function sandboxedSh(command: string, cwd: string, timeoutMs: numbe
         '(version 1)', '(deny default)', '(allow process-exec process-fork)',
         '(allow signal (target children))', '(allow sysctl-read)',
         '(allow mach-lookup (global-name "com.apple.system.logger"))',
-        `(allow file-read* ${[root, '/System', '/Library', '/usr', '/bin', '/sbin', '/opt/homebrew', '/opt/local', '/dev'].map(subpath).join(' ')} (literal "/") ${runtimes.map((path) => `(literal ${JSON.stringify(path)})`).join(' ')})`,
+        `(allow file-read* ${[root, '/System', '/Library', '/usr', '/bin', '/sbin', '/opt/homebrew', '/opt/local', '/dev', '/etc', '/private/etc'].map(subpath).join(' ')} (literal "/") ${runtimes.map((path) => `(literal ${JSON.stringify(path)})`).join(' ')})`,
         `(allow file-read-metadata)`,
         `(allow file-write* ${subpath(root)} (literal "/dev/null"))`,
+        '(allow system-socket)',
+        '(allow mach-lookup (global-name "com.apple.trustd") (global-name "com.apple.trustd.agent") (global-name "com.apple.securityd") (global-name "com.apple.securityd.xpc") (global-name "com.apple.ocspd") (global-name "com.apple.mDNSResponder") (global-name "com.apple.mDNSResponder.reconfirm") (global-name "com.apple.CoreServices.launchservicesd") (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.lsd.mapdb") (global-name "com.apple.distributed_notifications@Uv3") (global-name "com.apple.system.notification_center") (global-name "com.apple.bsd.dirhelper") (global-name "com.apple.system.DirectoryService.libinfo_v1") (global-name "com.apple.system.DirectoryService.membership_v1"))',
+        // Public web, git, and DNS only. Other ports, including localhost services, stay closed.
+        '(deny network-outbound (remote ip "localhost:*"))',
+        '(deny network-outbound (remote tcp "localhost:*"))',
+        '(deny network-inbound (local ip "localhost:*"))',
+        '(allow network*)',
       ].join('\n');
       argv = ['/usr/bin/sandbox-exec', '-p', profile, ...shell];
     } else if (process.platform === 'linux') {
       const bwrap = ['/usr/bin/bwrap', '/bin/bwrap'].find(existsSync);
       if (!bwrap) throw new Error('install bubblewrap (bwrap) to enable verification');
-      argv = [bwrap, '--unshare-all', '--die-with-parent', '--new-session', '--cap-drop', 'ALL'];
-      for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt']) {
+      argv = [bwrap, '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--unshare-cgroup', '--die-with-parent', '--new-session', '--cap-drop', 'ALL'];
+      for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt', '/etc']) {
         if (existsSync(path)) argv.push('--ro-bind', path, path);
       }
       argv.push('--proc', '/proc', '--dev', '/dev');

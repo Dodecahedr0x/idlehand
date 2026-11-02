@@ -42,9 +42,10 @@ export const Dashboard: FC<{
           <div class="command"><code>idlehand run --dry-run</code><button class="btn small" type="button" data-copy="idlehand run --dry-run" aria-label="Copy preview command">Copy</button></div>
           <p class="fine-print">First contribution with Claude Code:</p>
           <div class="command"><code>idlehand run --provider claude --budget '$2' --once</code><button class="btn small" type="button" data-copy="idlehand run --provider claude --budget '$2' --once" aria-label="Copy Claude contribution command">Copy</button></div>
-          <p class="fine-print">Or one task with Codex:</p>
+          <p class="fine-print">Or one task with Codex or the Cursor CLI:</p>
           <div class="command"><code>idlehand run --provider codex --budget '1 task' --once</code><button class="btn small" type="button" data-copy="idlehand run --provider codex --budget '1 task' --once" aria-label="Copy Codex contribution command">Copy</button></div>
-          <p class="fine-print">Claude dollar budgets use an estimated spending threshold; in-flight calls can exceed it, so leave headroom. Codex spending is estimated and has no dollar cap; one task can vary in cost. Setup status updates when you refresh, using reports from your account.</p>
+          <div class="command"><code>idlehand run --provider cursor --budget '1 task' --once</code><button class="btn small" type="button" data-copy="idlehand run --provider cursor --budget '1 task' --once" aria-label="Copy Cursor contribution command">Copy</button></div>
+          <p class="fine-print">Claude dollar budgets use an estimated spending threshold; in-flight calls can exceed it, so leave headroom. Codex and Cursor spending is estimated and has no dollar cap; one task can vary in cost. Setup status updates when you refresh, using reports from your account.</p>
         </div>
       </section>
       <nav class="section-nav" aria-label="Dashboard sections"><a href="#included">Included repos</a><a href="#your-repos">Your repos</a><a href="#discover">Find a project</a></nav>

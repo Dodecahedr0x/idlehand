@@ -75,15 +75,18 @@ test('sandbox startup failure never confirms an expected failing reproduction', 
   }
 });
 
-test('the runtime runs inside the sandbox but cannot contact a local credential service', async () => {
+test('verification can use the public network and cannot reach a local service', async () => {
   const checkout = mkdtempSync(join(tmpdir(), 'idlehand-network-'));
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('synthetic-secret') });
   try {
-    const script = `try { await fetch('http://127.0.0.1:${server.port}'); process.exit(25); } catch { console.log('network denied'); }`;
-    const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
-    const result = await sandboxedSh(`${quote(process.execPath)} -e ${quote(script)}`, checkout, 10_000);
+    const script = [
+      'if curl -fsS --max-time 15 https://example.com >/dev/null; then echo public-ok; else echo public-fail; fi',
+      `if curl -fsS --max-time 3 http://127.0.0.1:${server.port}/ >/dev/null; then echo local-open; else echo local-denied; fi`,
+    ].join('\n');
+    const result = await sandboxedSh(script, checkout, 20_000);
     expect(result.code).toBe(0);
-    expect(result.stdout.trim()).toBe('network denied');
+    expect(result.stdout).toContain('public-ok');
+    expect(result.stdout).toContain('local-denied');
   } finally {
     server.stop(true);
     rmSync(checkout, { recursive: true, force: true });

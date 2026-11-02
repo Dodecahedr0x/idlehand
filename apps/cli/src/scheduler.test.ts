@@ -66,6 +66,20 @@ describe('planCandidates', () => {
     expect(planCandidates(scans, { ...b, now: later }).map((c) => c.repo)).toEqual(['o/r', 'o/fresh']);
   });
 
+  test('continuous mode does not wait on author, assignment, review interval, or a failed attempt', () => {
+    const b = base();
+    b.state.markCodebaseReview('o/r', 'abc');
+    const today = `codebase:${new Date().toISOString().slice(0, 10)}`;
+    const reviewed = b.state.startTask({ repo: 'o/r', kind: 'review-codebase', target: today, provider: 'claude' });
+    b.state.finishTask(reviewed, { outcome: 'nothing-found', url: null, summary: 'done', costUsd: 0, costEstimated: false, durationMs: 1 });
+    const failed = b.state.startTask({ repo: 'o/r', kind: 'fix-issue', target: 'issue:8', provider: 'claude' });
+    b.state.finishTask(failed, { outcome: 'failed', url: null, summary: 'failed', costUsd: 0, costEstimated: false, durationMs: 1 });
+    const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [pr(1, { author: { login: 'me' } })], issues: [issue(2, { assignees: [{ login: 'other' }] }), issue(8)] }];
+    const plan = planCandidates(scans, { ...b, continuous: true });
+    expect(plan.map((c) => c.target)).toEqual(['pr:1', 'issue:2', 'issue:8', today]);
+    b.state.close();
+  });
+
   test('failed work becomes eligible after cooling down while completed work stays skipped', () => {
     const b = base();
     try {

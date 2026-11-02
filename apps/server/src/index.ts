@@ -9,4 +9,4 @@ const github = new RealGitHubClient(config.githubClientId, config.githubClientSe
 const app = createApp({ config, store, github });
 
 const server = Bun.serve({ port: config.port, fetch: app.fetch });
-console.log(`[idlehand] listening on http://localhost:${server.port}  (BASE_URL=${config.baseUrl}${config.devLogin ? ', dev login ON' : ''})`);
+console.log(`[idlehand] listening on http://localhost:${server.port}  (BASE_URL=${config.baseUrl}${config.devLogin ? ', dev login ON' : ''}${config.devRepos.length ? `, preloaded ${config.devRepos.join(', ')}` : ''})`);

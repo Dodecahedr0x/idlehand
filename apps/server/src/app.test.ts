@@ -15,6 +15,7 @@ const config: ServerConfig = {
   sessionSecret: 'test-secret',
   dbPath: ':memory:',
   devLogin: false,
+  devRepos: [],
 };
 
 const REPOS: RepoInput[] = [
@@ -96,6 +97,14 @@ describe('auth basics', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/dashboard');
     expect(res.headers.get('set-cookie')).toContain(SESSION_COOKIE);
+  });
+  test('dev login preloads the configured repository', async () => {
+    const devApp = createApp({ config: { ...config, devLogin: true, devRepos: ['acme/rocket'] }, store, github: new FakeGitHub() });
+    const res = await devApp.request('http://localhost/auth/dev?login=octocat', { redirect: 'manual' });
+    const cookie = res.headers.get('set-cookie')!.split(';')[0]!;
+    const selections = await devApp.request('http://localhost/api/selections', { headers: { cookie } });
+    expect(selections.status).toBe(200);
+    expect(await selections.json()).toMatchObject([{ fullName: 'acme/rocket', selected: true }]);
   });
   test('mutations without the fetch header are rejected', async () => {
     const res = await app.request('http://localhost/api/selections', {
@@ -242,6 +251,8 @@ describe('CLI device flow + bearer API', () => {
       durationMs: 12345,
       startedAt: '2026-10-30T10:00:00.000Z',
     };
+    res = await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, provider: 'nope' } });
+    expect(res.status).toBe(400);
     res = await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: report });
     expect(res.status).toBe(201);
     const stored = (await res.json()) as StoredRunReport;
@@ -250,6 +261,9 @@ describe('CLI device flow + bearer API', () => {
 
     res = await req('/api/cli/runs', { bearer: poll.token });
     expect(((await res.json()) as StoredRunReport[]).map((r) => r.id)).toEqual([stored.id]);
+    res = await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, provider: 'cursor' } });
+    expect(res.status).toBe(201);
+    expect((await res.json()) as StoredRunReport).toMatchObject({ provider: 'cursor' });
 
     expect((await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, kind: 'dance' } })).status).toBe(400);
     expect((await req('/api/cli/runs', { method: 'POST', bearer: poll.token, json: { ...report, costUnknown: 'true' } })).status).toBe(400);
@@ -319,6 +333,7 @@ describe('first contribution setup', () => {
     expect(dashboard).toContain('idlehand login --server http://localhost:8787');
     expect(dashboard).toContain('idlehand doctor');
     expect(dashboard).toContain("idlehand run --provider codex --budget &#39;1 task&#39; --once");
+    expect(dashboard).toContain("idlehand run --provider cursor --budget &#39;1 task&#39; --once");
     expect(dashboard).toContain('no dollar cap');
     expect(dashboard).toContain('CLI not connected yet');
   });

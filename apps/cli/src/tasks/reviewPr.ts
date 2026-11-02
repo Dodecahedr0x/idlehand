@@ -58,7 +58,11 @@ export async function reviewPr(ctx: TaskContext, prSummary: PrSummary): Promise<
     if (verdict === 'approve' && testsVerified !== true) verdict = 'comment';
     const blocking = out.findings.filter((f) => f.severity === 'blocking' || f.severity === 'major');
     if (verdict === 'approve' && blocking.length) verdict = 'request_changes';
-    // GitHub refuses REQUEST_CHANGES/APPROVE on your own PR; the scheduler already skips those.
+    const own = pr.author.login === ctx.login;
+    if (own && verdict !== 'comment') {
+      ctx.log('posting a comment; GitHub does not accept an approval on your own pull request');
+      verdict = 'comment';
+    }
 
     const inline = out.findings.filter((f) => f.line != null && f.line > 0).map((f) => ({ path: f.path, line: f.line!, body: `**${f.severity}** — ${f.body}` }));
     const general = out.findings.filter((f) => f.line == null || f.line <= 0);
@@ -77,7 +81,8 @@ export async function reviewPr(ctx: TaskContext, prSummary: PrSummary): Promise<
     ctx.log(`posted ${event.toLowerCase()} review ${url}`);
 
     // Merge only when: policy allows, we have push rights, agent approved AND marked safe, tests verified green here, GitHub says mergeable & checks clean.
-    if (verdict === 'approve' && out.safeToMerge && canMerge && testsVerified) {
+    const approved = verdict === 'approve' || (own && out.verdict === 'approve' && testsVerified === true);
+    if (approved && out.safeToMerge && canMerge && testsVerified) {
       const fresh = await prDetail(ctx.repo, pr.number);
       const checksOk = fresh.statusCheckRollup.length === 0 || fresh.statusCheckRollup.every((c) => (c.conclusion ?? c.state ?? '').toUpperCase().match(/SUCCESS|NEUTRAL|SKIPPED/));
       const noHold = !fresh.title.match(/\bWIP\b|\[wip\]|do not merge/i) && !prSummary.labels.some((l) => /do.?not.?merge|wip|hold/i.test(l.name));

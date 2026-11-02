@@ -295,7 +295,7 @@ export const Layout: FC<PropsWithChildren<{ title?: string; me: Me | null; activ
     <head>
       <meta charSet="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <meta name="description" content="Put your leftover Claude Code or Codex credits to work on open source. Choose repositories, set a budget, and contribute from your own machine." />
+      <meta name="description" content="Put your leftover Claude Code, Codex, or Cursor CLI credits to work on open source. Choose repositories, set a budget, and contribute from your own machine." />
       <meta name="theme-color" content="#f8f8f2" />
       <link rel="icon" href={`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="12" fill="#295d43"/><text x="16" y="24" text-anchor="middle" font-family="Georgia,serif" font-size="27" fill="#e2eead">i</text></svg>')}`} />
       <title>{title ? `${title} · Idlehand` : 'Idlehand — good code from idle time'}</title>

@@ -35,7 +35,7 @@ export interface TaskResult {
 }
 
 export const FOOTER = (what: string) =>
-  `\n\n---\n<sub>${what} by [Idlehand](https://github.com/idlehand) — a human's spare Claude Code / Codex credits, pointed at this repo. Every claim above was re-verified by the runner, not just the model. Reply to this thread if it is wrong; a maintainer can label the repo \`no-idlehand\` to opt out.</sub>`;
+  `\n\n---\n<sub>${what} by [Idlehand](https://github.com/idlehand) — a human's spare Claude Code, Codex, or Cursor CLI credits, pointed at this repo. Every claim above was re-verified by the runner, not just the model. Reply to this thread if it is wrong; a maintainer can label the repo \`no-idlehand\` to opt out.</sub>`;
 
 export const MARKER = (kind: string, target: string) => `<!-- idlehand:${kind}:${target} -->`;
 

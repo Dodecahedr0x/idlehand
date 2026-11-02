@@ -77,15 +77,15 @@ export class State {
       .run(r.outcome, r.url, r.summary.slice(0, 4000), r.costUsd, r.costEstimated ? 1 : 0, r.costUnknown ? 1 : 0, r.durationMs, new Date().toISOString(), id);
   }
 
-  /** Completed work stays handled. Tool/agent failures get bounded retries after a cooldown. */
-  seen(repo: string, kind: TaskKind, target: string, now = new Date()): boolean {
+  /** Completed work stays handled. Failures retry after `retryDelayMs`, up to MAX_TASK_ATTEMPTS. */
+  seen(repo: string, kind: TaskKind, target: string, now = new Date(), retryDelayMs = TASK_RETRY_DELAY_MS): boolean {
     const rows = this.db.query(`SELECT outcome, finished_at FROM tasks WHERE repo=? AND kind=? AND target=? ORDER BY id DESC`)
       .all(repo, kind, target) as Pick<TaskRow, 'outcome' | 'finished_at'>[];
     if (!rows.length) return false;
     if (rows.some((r) => r.outcome !== 'failed')) return true;
     if (rows.length >= MAX_TASK_ATTEMPTS) return true;
     const finishedAt = Date.parse(rows[0]!.finished_at ?? '');
-    return !Number.isFinite(finishedAt) || now.getTime() - finishedAt < TASK_RETRY_DELAY_MS;
+    return !Number.isFinite(finishedAt) || now.getTime() - finishedAt < retryDelayMs;
   }
 
   /** Mark stale 'running' rows (from a crashed run) as failed. */

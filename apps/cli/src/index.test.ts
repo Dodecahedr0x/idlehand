@@ -19,17 +19,24 @@ function fixture(config?: Config) {
   writeFileSync(join(bin, 'gh'), `#!/bin/sh
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$1 $2" in
-  'auth status') exit 0 ;;
+  'auth status')
+    if [ -f "$GH_LOGGED_IN" ]; then exit 0; fi
+    if [ "$GH_AUTH" = invalid ]; then echo "The token in keyring is invalid." >&2; exit 1; fi
+    if [ "$GH_AUTH" = missing ]; then echo "You are not logged into any GitHub hosts." >&2; exit 1; fi
+    exit 0 ;;
+  'auth login'|'auth refresh') touch "$GH_LOGGED_IN"; exit 0 ;;
   'api user') printf 'tester\\n' ;;
   'api repos/'*)
     if [ "$SLOW_SCAN" = 1 ]; then sleep 0.3; fi
     printf '%s\\n' '{"full_name":"o/r","default_branch":"main","archived":false}' ;;
-  'pr list'|'issue list') printf '[]\\n' ;;
+  'pr list')
+    if [ "$GH_OWN_PR" = 1 ]; then printf '%s\\n' '[{"number":1,"title":"mine","author":{"login":"tester"},"isDraft":false,"createdAt":"2026-01-01T00:00:00Z","reviews":[],"labels":[]}]'; else printf '[]\\n'; fi ;;
+  'issue list') printf '[]\\n' ;;
   *) exit 90 ;;
 esac
 `, { mode: 0o755 });
   writeFileSync(join(bin, 'git'), '#!/bin/sh\nprintf "git %s\\n" "$*" >> "$GH_CALLS"\nexit 90\n', { mode: 0o755 });
-  const env = { ...process.env, IDLEHAND_HOME: home, GH_CALLS: calls, PATH: `${bin}:/usr/bin:/bin` };
+  const env = { ...process.env, IDLEHAND_HOME: home, GH_CALLS: calls, GH_LOGGED_IN: join(root, 'logged-in'), PATH: `${bin}:/usr/bin:/bin` };
   const spawn = (args: string[], extraEnv: Record<string, string> = {}) => Bun.spawn([process.execPath, join(import.meta.dir, 'index.ts'), ...args], {
     env: { ...env, ...extraEnv }, stdout: 'pipe', stderr: 'pipe',
   });
@@ -46,6 +53,7 @@ function config(): Config {
   cfg.server.url = 'http://127.0.0.1:1';
   cfg.claude.bin = 'idlehand-test-missing-claude';
   cfg.codex.bin = 'idlehand-test-missing-codex';
+  cfg.cursor.bin = 'idlehand-test-missing-cursor';
   cfg.repos = ['o/r'];
   return cfg;
 }
@@ -57,7 +65,10 @@ test('help offers a safe first run, and bare config shows defaults without creat
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('--dry-run');
     expect(r.stdout).toContain("'$2'");
-    if (args[0] === 'run') expect(r.stdout).toContain('--jobs');
+    if (args[0] === 'run') {
+      expect(r.stdout).toContain('cursor');
+      expect(r.stdout).toContain('--jobs');
+    }
     expect(r.stderr).toBe('');
   }
   const r = await f.run('config', '--json');
@@ -139,6 +150,35 @@ test('doctor returns the same failure status in human and JSON output; optional 
   expect((await f.run('doctor', '--json')).code).toBe(1);
 });
 
+test('a run signs the GitHub CLI in instead of asking for it first', async () => {
+  const missing = fixture(config());
+  const missingProc = missing.spawn(['run', '--dry-run', '--repo', 'o/r', '--json'], { GH_AUTH: 'missing' });
+  const [missingOut, missingErr, missingCode] = await Promise.all([new Response(missingProc.stdout).text(), new Response(missingProc.stderr).text(), missingProc.exited]);
+  expect(missingCode).toBe(0);
+  expect(missingErr).toBe('');
+  expect(missingOut).toContain('dry run: nothing executed');
+  expect(readFileSync(missing.calls, 'utf8')).toContain('auth login -h github.com -p https -w');
+  const invalid = fixture(config());
+  const invalidProc = invalid.spawn(['run', '--dry-run', '--repo', 'o/r', '--json'], { GH_AUTH: 'invalid' });
+  const invalidCode = await invalidProc.exited;
+  await new Response(invalidProc.stdout).text();
+  expect(invalidCode).toBe(0);
+  expect(readFileSync(invalid.calls, 'utf8')).toContain('auth refresh -h github.com');
+});
+
+test('a run is continuous by default, so your own pull request stays in the queue', async () => {
+  const f = fixture(config());
+  const included = f.spawn(['run', '--dry-run', '--repo', 'o/r', '--only', 'review-pr', '--json'], { GH_OWN_PR: '1' });
+  const [includedOut, includedErr, includedCode] = await Promise.all([new Response(included.stdout).text(), new Response(included.stderr).text(), included.exited]);
+  expect(includedCode).toBe(0);
+  expect(includedErr).toBe('');
+  expect(includedOut.trim().split('\n').map((line) => JSON.parse(line)).find((e) => e.type === 'plan').tasks.map((t: { target: string }) => t.target)).toEqual(['pr:1']);
+  const skipped = f.spawn(['run', '--dry-run', '--repo', 'o/r', '--only', 'review-pr', '--no-continuous', '--json'], { GH_OWN_PR: '1' });
+  const [skippedOut, skippedCode] = await Promise.all([new Response(skipped.stdout).text(), skipped.exited]);
+  expect(skippedCode).toBe(0);
+  expect(skippedOut.trim().split('\n').map((line) => JSON.parse(line)).find((e) => e.type === 'plan').tasks).toEqual([]);
+});
+
 test('dry run works without an agent, deduplicates repos, and leaves running tasks and checkouts alone', async () => {
   const f = fixture(config());
   mkdirSync(join(f.home, 'repos', 'o', 'r'), { recursive: true });
@@ -159,6 +199,26 @@ test('dry run works without an agent, deduplicates repos, and leaves running tas
   const calls = readFileSync(f.calls, 'utf8').trim().split('\n');
   expect(calls.filter((line) => line === 'api repos/o/r')).toHaveLength(1);
   expect(calls.some((line) => line.startsWith('git '))).toBe(false);
+});
+
+test('Cursor monetary budgets fail before tool checks, while a task budget can be selected', async () => {
+  const cfg = config();
+  cfg.provider = 'cursor';
+  cfg.subscription.monthlyUsd = 200;
+  const f = fixture(cfg);
+  for (const cap of ['$0.01', '10%']) {
+    const result = await f.run('run', '--budget', cap, '--json');
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr).message).toContain('Cursor cannot enforce');
+    expect(existsSync(f.calls)).toBe(false);
+  }
+  const selected = await f.run('config', 'set', 'provider', 'cursor', '--json');
+  expect(selected.code).toBe(0);
+  expect(JSON.parse(selected.stdout).value).toBe('cursor');
+  const doctor = await f.run('doctor', '--json');
+  expect(doctor.code).toBe(1);
+  expect(JSON.parse(doctor.stdout).find((c: { name: string }) => c.name === 'budget')).toMatchObject({ ok: false, detail: expect.stringContaining('Cursor cannot enforce') });
+  expect(JSON.parse(doctor.stdout).find((c: { name: string }) => c.name === 'cursor')).toMatchObject({ ok: false });
 });
 
 test('Codex monetary budgets fail before tool checks, while dry runs remain available', async () => {

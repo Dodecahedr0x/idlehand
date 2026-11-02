@@ -1,19 +1,22 @@
 #!/usr/bin/env bun
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
-import { checkBudget, formatBudget, formatCost, parseBudget, usdCap, type TaskKind } from '@idlehand/shared';
+import { checkBudget, formatBudget, formatCost, parseBudget, PROVIDERS, usdCap, type Provider, type TaskKind } from '@idlehand/shared';
 import { DEFAULT_CONFIG, getConfigValue, loadConfig, redactConfig, saveConfig, setConfigValue } from './config.ts';
 import { State } from './state.ts';
 import { ServerClient, ServerError } from './server.ts';
 import { makeProvider, providerBudgetError } from './providers/index.ts';
 import { Scheduler } from './scheduler.ts';
 import { attachJson, attachPlain } from './ui/plain.ts';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { exec, which } from './shell.ts';
+import { ensureGhAuth, githubRepoFromRemote } from './github-setup.ts';
 import { CONFIG_PATH, HOME } from './paths.ts';
 
 const program = new Command();
 program
   .name('idlehand')
-  .description('Spend your spare Claude Code / Codex credits on open source: review PRs, fix issues, hunt bugs — under a budget you set.')
+  .description('Spend your spare Claude Code, Codex, or Cursor CLI credits on open source: review PRs, fix issues, hunt bugs — under a budget you set.')
   .version('0.1.0')
   .option('--json', 'machine-readable JSONL output (for agents and scripts)')
   .option('--plain', 'plain line output, no TUI')
@@ -22,14 +25,16 @@ program
   .configureOutput({ writeErr: () => {} })
   .addHelpText('after', `
 Quick start:
+  idlehand dev                            Start the local service, preloaded with this repo
   idlehand doctor                         Check your setup
   idlehand repos add owner/name           Pick a repository (no server needed)
   idlehand run --dry-run                   Preview the work without spending credits
   idlehand run --provider claude --budget '$2' --once   Try one task with a $2 stopping threshold
+  idlehand run --budget '$5'                 Keep working until the budget is spent
 
-Use idlehand login to sync repository selections from the web.
+Use idlehand login to sync repository selections from the web. GitHub sign-in happens here; you do not run gh auth login first.
 Quote dollar budgets with single quotes so your shell preserves the $ sign.
-Claude dollar thresholds can overshoot during in-flight calls. Codex needs a task, time, or remaining budget.
+Claude dollar thresholds can overshoot during in-flight calls. Codex and the Cursor CLI need a task, time, or remaining budget.
 Output switches to plain text when piped. Use --json for JSONL.
 Exit codes: 0 success, 1 setup or command error, 2 one or more tasks failed.`);
 
@@ -57,6 +62,7 @@ program
   .option('--server <url>', 'Idlehand server URL', undefined)
   .option('--no-open', 'do not try to open the browser')
   .action(async (opts: { server?: string; open: boolean }) => {
+    try { await ensureGhAuth(); } catch (e) { return fail((e as Error).message); }
     const cfg = loadConfig();
     if (opts.server) cfg.server.url = opts.server;
     const client = new ServerClient(cfg.server.url);
@@ -110,7 +116,7 @@ config
     let next;
     try { next = setConfigValue(cfg, key, value); } catch (e) { return fail((e as Error).message); }
     if (key === 'budget') { try { parseBudget(value); } catch (e) { return fail((e as Error).message); } }
-    if (key === 'provider' && !['claude', 'codex'].includes(value)) return fail('provider must be claude or codex');
+    if (key === 'provider' && !(PROVIDERS as readonly string[]).includes(value)) return fail(`provider must be ${PROVIDERS.join(', ')}`);
     saveConfig(next);
     out(wantsJson() ? { key, value: getConfigValue(next, key) } : `✓ ${key} = ${JSON.stringify(getConfigValue(next, key))}`);
   });
@@ -146,10 +152,51 @@ repos.command('remove').argument('<owner/name>', 'GitHub repository', repoName).
 });
 
 program
+  .command('dev')
+  .description('Start the local web service in dev mode, with this checkout’s GitHub repo already included')
+  .option('-r, --repo <owner/name>', 'repository to preload (default: this directory’s GitHub origin)', repoName)
+  .option('--no-open', 'do not open the browser')
+  .action(async (opts: { repo?: string; open: boolean }) => {
+    try { await ensureGhAuth(); } catch (e) { return fail((e as Error).message); }
+    let repo = opts.repo;
+    if (!repo) {
+      const remote = await exec(['git', 'config', '--get', 'remote.origin.url'], { timeoutMs: 10_000 });
+      repo = remote.code === 0 ? githubRepoFromRemote(remote.stdout) ?? undefined : undefined;
+      if (!repo) return fail('this directory has no GitHub origin. Pass --repo owner/name.');
+    }
+    const cfg = loadConfig();
+    if (!cfg.repos.includes(repo)) { cfg.repos.push(repo); saveConfig(cfg); }
+    const login = (await exec(['gh', 'api', 'user', '--jq', '.login'], { timeoutMs: 20_000 }));
+    if (login.code !== 0) return fail('could not read the GitHub login after sign-in');
+    const user = login.stdout.trim();
+    const serverEntry = join(import.meta.dir, '../../server/src/index.ts');
+    if (!existsSync(serverEntry)) return fail('dev mode starts the server from a source checkout. Run it inside the Idlehand repository.');
+    const child = Bun.spawn([process.execPath, serverEntry], {
+      env: { ...process.env, IDLEHAND_DEV_LOGIN: '1', IDLEHAND_DEV_REPO: repo, PORT: new URL(cfg.server.url).port || '8787', BASE_URL: cfg.server.url.replace(/\/+$/, '') },
+      stdin: 'inherit', stdout: 'inherit', stderr: 'inherit',
+    });
+    const health = new URL('/healthz', cfg.server.url);
+    let up = false;
+    for (let i = 0; i < 50; i++) {
+      if (child.exitCode != null) break;
+      try { if ((await fetch(health)).ok) { up = true; break; } } catch { /* still starting */ }
+      await Bun.sleep(100);
+    }
+    if (!up) { child.kill(); return fail(`server did not start at ${cfg.server.url}`); }
+    const url = `${cfg.server.url.replace(/\/+$/, '')}/auth/dev?login=${encodeURIComponent(user)}`;
+    console.log(`\nDev server ready. ${repo} is included for ${user}.\n\n  ${url}\n\nStop with Ctrl+C. Then: idlehand run\n`);
+    if (opts.open) await openBrowser(url);
+    const stop = () => child.kill();
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    await child.exited;
+  });
+
+program
   .command('run')
-  .description('Spend the budget: review PRs first, then open issues, then hunt for bugs in the codebase')
+  .description('Spend the budget until it is spent: review PRs, then open issues, then hunt for bugs')
   .option('-b, --budget <budget>', "e.g. '$5', '10%', '3 tasks', '45m', 'remaining' (default from config)")
-  .addOption(new Option('-p, --provider <name>', 'agent to use (default from config)').choices(['claude', 'codex']))
+  .addOption(new Option('-p, --provider <name>', 'agent to use (default from config)').choices([...PROVIDERS]))
   .option('-r, --repo <owner/name...>', 'only these repos (otherwise: your selections + local repos)', (value: string, previous: string[] = []) => [...previous, repoName(value)])
   .option('--only <kinds>', 'comma list of review-pr,fix-issue,review-codebase', taskKinds)
   .option('--once', 'stop after one task')
@@ -158,27 +205,33 @@ program
     if (!/^\d+$/.test(value) || !Number.isSafeInteger(count) || count < 1) throw new InvalidArgumentError('expected a positive whole number, for example: idlehand run --jobs 4');
     return count;
   }, 4)
+  .option('--no-continuous', 'one pass through the current queue, then stop')
   .option('--dry-run', 'plan only, spend nothing')
   .option('--no-report', 'do not send run reports to the server')
   .addHelpText('after', `
 Examples:
   idlehand run --dry-run --repo honojs/hono
   idlehand run --provider claude --budget '$2' --once
+  idlehand run --budget '$5'
+  idlehand run --no-continuous --budget '$5'
   idlehand run --provider codex --budget '3 tasks' --only fix-issue
+  idlehand run --provider cursor --budget '1 task' --once
   idlehand run --provider claude --budget 10%   Requires subscription.monthlyUsd
   idlehand run --json --budget 45m > run.jsonl
 
 Ctrl+C or q in the dashboard stops after the running tasks finish.
-Claude dollar thresholds can overshoot during in-flight calls. Codex has no dollar cap. Up to 4 tasks run at once (--jobs), each in its own worktree. A dollar budget can overshoot by the tasks already running.
-Dry runs need gh login, but do not need an agent CLI or change saved task records.`)
-  .action(async (opts: { budget?: string; provider?: string; repo?: string[]; only?: TaskKind[]; once?: boolean; jobs?: number; dryRun?: boolean; report: boolean }) => {
+Claude dollar thresholds can overshoot during in-flight calls. Codex and the Cursor CLI have no dollar cap.
+A run keeps scanning until the budget is spent. Up to 4 tasks run at once (--jobs), each in its own worktree, including several tasks on the same repo. A dollar budget can overshoot by the tasks already running. It ignores author and does not wait between tasks. --no-continuous makes one pass and then stops. --once stops after one task.
+A run signs in to the GitHub CLI if needed. Dry runs do not need an agent CLI or change saved task records.
+Press Ctrl+C to stop when the queue is idle. An idle dollar budget does not end the run.`)
+  .action(async (opts: { budget?: string; provider?: string; repo?: string[]; only?: TaskKind[]; once?: boolean; jobs?: number; continuous?: boolean; dryRun?: boolean; report: boolean }) => {
     const cfg = loadConfig();
     let budget;
     try { budget = parseBudget(opts.budget ?? cfg.budget); } catch (e) { return fail((e as Error).message); }
     const ready = checkBudget(budget, { spentUsd: 0, tasksCompleted: 0, elapsedMs: 0, providerExhausted: false }, cfg.subscription.monthlyUsd ?? undefined);
     if (!ready.ok) return fail(ready.reason);
-    const providerName = (opts.provider ?? cfg.provider) as 'claude' | 'codex';
-    if (!['claude', 'codex'].includes(providerName)) return fail('provider must be claude or codex');
+    const providerName = (opts.provider ?? cfg.provider) as Provider;
+    if (!(PROVIDERS as readonly string[]).includes(providerName)) return fail(`provider must be ${PROVIDERS.join(', ')}`);
     const provider = makeProvider(providerName, cfg);
     if (!opts.dryRun) {
       const budgetError = providerBudgetError(provider, usdCap(budget, cfg.subscription.monthlyUsd ?? undefined));
@@ -186,9 +239,7 @@ Dry runs need gh login, but do not need an agent CLI or change saved task record
       const check = await provider.check();
       if (!check.ok) return fail(`${check.detail}. Run idlehand doctor to check your setup.`);
     }
-    if (!(await which('gh'))) return fail('gh (GitHub CLI) not found; install it and run `gh auth login`');
-    const ghOk = await exec(['gh', 'auth', 'status'], { timeoutMs: 20_000 });
-    if (ghOk.code !== 0) return fail('gh is not logged in; run `gh auth login`');
+    try { await ensureGhAuth(); } catch (e) { return fail((e as Error).message); }
 
     const only = opts.only;
     const list = (await resolveRepos(cfg, opts.repo ?? [])).map((r) => r.repo);
@@ -196,7 +247,7 @@ Dry runs need gh login, but do not need an agent CLI or change saved task record
 
     const state = new State();
     const server = cfg.server.token && opts.report ? new ServerClient(cfg.server.url, cfg.server.token) : null;
-    const scheduler = new Scheduler({ repos: list, budget, cfg, provider, state, only, once: opts.once, jobs: opts.jobs, dryRun: opts.dryRun, report: server ? (r) => server.report(r).then(() => {}) : undefined });
+    const scheduler = new Scheduler({ repos: list, budget, cfg, provider, state, only, once: opts.once, jobs: opts.jobs, continuous: opts.continuous, dryRun: opts.dryRun, report: server ? (r) => server.report(r).then(() => {}) : undefined });
 
     const tui = process.stdin.isTTY && process.stdout.isTTY && !program.opts().plain && !wantsJson();
     let exitCode = 0;
@@ -259,9 +310,9 @@ program.command('doctor').description('Check gh, the agent CLIs, and the server 
   if (!ghPath) checks.push({ name: 'gh', ok: false, detail: 'not found; https://cli.github.com' });
   else {
     const st = await exec(['gh', 'auth', 'status'], { timeoutMs: 20_000 });
-    checks.push({ name: 'gh', ok: st.code === 0, detail: st.code === 0 ? (st.stderr + st.stdout).split('\n').find((l) => l.includes('Logged in'))?.trim() ?? 'logged in' : 'not logged in; run `gh auth login`' });
+    checks.push({ name: 'gh', ok: st.code === 0, detail: st.code === 0 ? (st.stderr + st.stdout).split('\n').find((l) => l.includes('Logged in'))?.trim() ?? 'logged in' : 'not signed in; the next idlehand run or idlehand dev will sign in' });
   }
-  for (const p of ['claude', 'codex'] as const) {
+  for (const p of PROVIDERS) {
     const c = await makeProvider(p, cfg).check();
     checks.push({ name: p, ok: c.ok, detail: c.detail + (p === cfg.provider ? '  (selected)' : '') });
   }

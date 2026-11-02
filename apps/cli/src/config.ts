@@ -26,6 +26,15 @@ export interface Config {
     /** Price table used to *estimate* Codex spend from token counts. */
     pricing: { inputPerM: number; cachedInputPerM: number; outputPerM: number };
   };
+  cursor: {
+    /** Cursor CLI binary. The current installer exposes it as `agent`. */
+    bin: string;
+    model: string | null;
+    /** Pass `--force` so headless runs are not blocked on command approval. */
+    force: boolean;
+    /** Price table used to *estimate* Cursor spend from token counts. */
+    pricing: { inputPerM: number; cachedInputPerM: number; cacheWritePerM: number; outputPerM: number };
+  };
   /** Repos to work on when not using the server (or in addition). "owner/name". */
   repos: string[];
   policy: {
@@ -67,6 +76,14 @@ export const DEFAULT_CONFIG: Config = {
     sandbox: 'workspace-write',
     // Estimate only. Adjust to your plan/model: `idlehand config set codex.pricing.outputPerM 10`.
     pricing: { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10 },
+  },
+  cursor: {
+    bin: 'agent',
+    model: null,
+    force: true,
+    // Estimate only. The Cursor CLI reports tokens, not dollars. Adjust to your model:
+    // `idlehand config set cursor.pricing.outputPerM 15`.
+    pricing: { inputPerM: 3, cachedInputPerM: 0.3, cacheWritePerM: 3.75, outputPerM: 15 },
   },
   repos: [],
   policy: {

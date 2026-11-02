@@ -21,16 +21,19 @@ export interface ExecOptions {
   onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void;
   /** Cap stored output (we always keep the tail). */
   maxBytes?: number;
+  /** Hand the terminal to an interactive command such as `gh auth login`. */
+  stdio?: 'pipe' | 'inherit';
 }
 
 export async function exec(cmd: string[], opts: ExecOptions = {}): Promise<ExecResult> {
   const started = Date.now();
+  const inherit = opts.stdio === 'inherit';
   const proc = Bun.spawn(cmd, {
     cwd: opts.cwd,
     env: (opts.inheritEnv === false ? opts.env ?? {} : { ...process.env, ...(opts.env ?? {}) }) as Record<string, string>,
-    stdin: opts.stdin != null ? new TextEncoder().encode(opts.stdin) : 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdin: inherit ? 'inherit' : opts.stdin != null ? new TextEncoder().encode(opts.stdin) : 'ignore',
+    stdout: inherit ? 'inherit' : 'pipe',
+    stderr: inherit ? 'inherit' : 'pipe',
     detached: opts.killProcessGroup,
   });
   const killGroup = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} };
@@ -61,7 +64,9 @@ export async function exec(cmd: string[], opts: ExecOptions = {}): Promise<ExecR
     }
     return buf;
   };
-  const [stdout, stderr] = await Promise.all([collect(proc.stdout, 'stdout'), collect(proc.stderr, 'stderr')]);
+  let stdout = '';
+  let stderr = '';
+  if (!inherit) [stdout, stderr] = await Promise.all([collect(proc.stdout ?? null, 'stdout'), collect(proc.stderr ?? null, 'stderr')]);
   const code = await proc.exited;
   if (timer) clearTimeout(timer);
   return { code, stdout, stderr, timedOut, durationMs: Date.now() - started };
