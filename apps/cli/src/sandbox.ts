@@ -1,8 +1,41 @@
 /** OS-enforced boundary for untrusted setup, reproduction and test commands. */
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { exec, type ExecResult } from './shell.ts';
+
+// Bun only loads tsconfig after it can list every parent of the checkout.
+// Those parents are outside the sandbox, so JSX falls back to React and a
+// real reproduction crashes. Pass the checkout's import source instead of
+// opening those directories.
+const BUN_SUBCOMMANDS = 'install|add|remove|update|upgrade|link|unlink|pm|build|create|init|x|repl|exec|outdated|why|audit|info|publish|pack|patch|run';
+
+function jsxImportSource(root: string): string | null {
+  for (const name of ['tsconfig.json', 'jsconfig.json']) {
+    const path = join(root, name);
+    if (!existsSync(path)) continue;
+    try {
+      const parsed = Bun.JSONC.parse(readFileSync(path, 'utf8')) as { compilerOptions?: { jsxImportSource?: unknown } };
+      const source = parsed?.compilerOptions?.jsxImportSource;
+      if (typeof source === 'string' && source.length > 0 && !/[\s'"`$\\]/.test(source)) return source;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function bunShim(dir: string, bun: string, source: string | null): void {
+  const path = join(dir, 'bun');
+  const preload = join(dir, 'tmpdir-preload.ts');
+  // bun test starts workers without TMPDIR, so os.tmpdir() falls through to /tmp, which the sandbox cannot write.
+  writeFileSync(preload, `process.env.TMPDIR ??= ${JSON.stringify(dir)};\nprocess.env.TMP ??= process.env.TMPDIR;\nprocess.env.TEMP ??= process.env.TMPDIR;\n`);
+  const quotedBun = JSON.stringify(bun);
+  const quotedPreload = JSON.stringify(preload);
+  const jsx = source ? ` --jsx-import-source ${JSON.stringify(source)}` : '';
+  writeFileSync(path, `#!/bin/sh\ncase "$1" in\n  test)\n    shift\n    exec ${quotedBun} test${jsx} --preload ${quotedPreload} "$@"\n    ;;\n  ${BUN_SUBCOMMANDS})\n    exec ${quotedBun} "$@"\n    ;;\nesac\n${source ? `exec ${quotedBun}${jsx} "$@"` : `exec ${quotedBun} "$@"`}\n`);
+  chmodSync(path, 0o755);
+}
 
 export async function sandboxedSh(command: string, cwd: string, timeoutMs: number): Promise<ExecResult> {
   const root = realpathSync(cwd);
@@ -10,12 +43,15 @@ export async function sandboxedSh(command: string, cwd: string, timeoutMs: numbe
   // The compiled runner's executable is not Bun. Expose an installed Bun too,
   // without exposing the private tool directory or its credentials.
   const runtimes = [...new Set([process.execPath, Bun.which('bun')].filter((path): path is string => !!path).map((path) => realpathSync(path)))];
+  const jsx = jsxImportSource(root);
+  const bun = runtimes.find((path) => path.endsWith('/bun') || path.endsWith('\\bun'));
+  if (bun) bunShim(scratch, bun, jsx);
   const marker = `idlehand-sandbox-${randomUUID()}\n`;
   // A marker from inside the boundary distinguishes sandbox launch failure from
   // the expected nonzero result of a reproduction. Never fall back to plain sh.
   const shell = ['/bin/sh', '-c', 'printf "%s" "$0"; exec /bin/sh -c "$1"', marker, command];
   const env = {
-    PATH: `${runtimes.map((path) => dirname(path)).join(':')}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+    PATH: `${bun ? `${scratch}:` : ''}${runtimes.map((path) => dirname(path)).join(':')}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
     HOME: scratch, TMPDIR: scratch, TMP: scratch, TEMP: scratch,
     CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', TERM: 'dumb', LANG: 'C',
   };

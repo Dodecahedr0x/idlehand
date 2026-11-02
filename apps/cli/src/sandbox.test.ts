@@ -20,6 +20,38 @@ test('an installed runner can still use Bun without exposing its private tool di
   }
 });
 
+test('verification runs the checkout JSX runtime instead of crashing as React', async () => {
+  const checkout = mkdtempSync(join(tmpdir(), 'idlehand-jsx-'));
+  mkdirSync(join(checkout, 'node_modules/localjsx'), { recursive: true });
+  const runtime = 'export function jsx(){console.log("jsx-from-tsconfig");return null}\nexport function jsxDEV(){console.log("jsx-from-tsconfig");return null}\nexport const Fragment=Symbol.for("localjsx.fragment");\n';
+  writeFileSync(join(checkout, 'node_modules/localjsx/jsx-runtime.js'), runtime);
+  writeFileSync(join(checkout, 'node_modules/localjsx/jsx-dev-runtime.js'), runtime);
+  writeFileSync(join(checkout, 'tsconfig.json'), '{\n  "compilerOptions": {\n    "jsx": "react-jsx",\n    // not react\n    "jsxImportSource": "localjsx",\n  }\n}\n');
+  writeFileSync(join(checkout, 'app.tsx'), 'export const view = <div />;\nconsole.log("rendered");\n');
+  writeFileSync(join(checkout, 'main.ts'), 'import "./app.tsx";\n');
+  try {
+    const result = await sandboxedSh('bun main.ts', checkout, 15_000);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('jsx-from-tsconfig');
+    const install = await sandboxedSh('bun install', checkout, 15_000);
+    expect(`${install.stdout}\n${install.stderr}`).not.toContain('Script not found');
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('verification lets bun test create temporary directories inside the checkout', async () => {
+  const checkout = mkdtempSync(join(tmpdir(), 'idlehand-test-tmp-'));
+  writeFileSync(join(checkout, 'tmp-probe.test.ts'), 'import { test } from "bun:test";\nimport { mkdtempSync } from "node:fs";\nimport { tmpdir } from "node:os";\nimport { join } from "node:path";\ntest("writes a temp directory", () => {\n  const dir = mkdtempSync(join(tmpdir(), "idlehand-sandbox-tmp-"));\n  if (!dir.includes(process.cwd())) throw new Error(dir);\n});\n');
+  try {
+    const result = await sandboxedSh('bun test tmp-probe.test.ts', checkout, 15_000);
+    expect(result.code).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain('EPERM');
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 test('verification denies writes and credential reads outside the checkout, including symlink escapes', async () => {
   const parent = mkdtempSync(join(tmpdir(), 'idlehand-confinement-'));
   const checkout = join(parent, 'checkout');
