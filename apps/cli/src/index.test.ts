@@ -57,6 +57,7 @@ test('help offers a safe first run, and bare config shows defaults without creat
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('--dry-run');
     expect(r.stdout).toContain("'$2'");
+    if (args[0] === 'run') expect(r.stdout).toContain('--jobs');
     expect(r.stderr).toBe('');
   }
   const r = await f.run('config', '--json');
@@ -77,6 +78,8 @@ test('invalid arguments fail before tool checks and leave settings alone', async
     ['status', '-n', 'nope'],
     ['status', '--limit', '-1'],
     ['status', '--limit', '0'],
+    ['run', '--jobs', '0'],
+    ['run', '--jobs', 'nope'],
     ['run', '--budget', '10%'],
     ['run', '--budget', '0m'],
     ['--unknown-option'],

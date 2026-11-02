@@ -7,7 +7,7 @@ import { checkBudget, usdCap, type Budget, type BudgetUsage, type BudgetVerdict,
 import type { Config } from './config.ts';
 import { currentLogin, listOpenIssues, listOpenPrs, repoInfo, type IssueSummary, type PrSummary, type RepoInfo } from './gh.ts';
 import { providerBudgetError, type AgentProvider, type AgentRunResult } from './providers/index.ts';
-import type { State } from './state.ts';
+import { TASK_RETRY_DELAY_MS, type State } from './state.ts';
 import { reviewPr } from './tasks/reviewPr.ts';
 import { fixIssue } from './tasks/fixIssue.ts';
 import { reviewCodebase } from './tasks/reviewCodebase.ts';
@@ -35,6 +35,10 @@ export interface SchedulerOptions {
   dryRun?: boolean;
   /** Stop after the first task. */
   once?: boolean;
+  /** Tasks in flight at once. Each task has its own worktree. Default 4. */
+  jobs?: number;
+  /** Keep scanning until the budget is spent. No cooldowns, and author is ignored. */
+  continuous?: boolean;
   report?: (r: RunReport) => Promise<void>;
 }
 
@@ -50,10 +54,12 @@ export const PRIORITY: TaskKind[] = ['review-pr', 'fix-issue', 'review-codebase'
 const ISSUE_BOOST = ['bug', 'good first issue', 'good-first-issue', 'help wanted', 'help-wanted', 'regression', 'crash'];
 
 /** Pure: turn scans into an ordered candidate list. Exported for tests. */
-export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Config; state: State; only?: TaskKind[]; now?: Date }): Candidate[] {
+export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Config; state: State; only?: TaskKind[]; now?: Date; continuous?: boolean }): Candidate[] {
   const { login, cfg, state } = opts;
   const now = opts.now ?? new Date();
   const want = (k: TaskKind) => !opts.only || opts.only.includes(k);
+  const retryDelayMs = opts.continuous ? 0 : TASK_RETRY_DELAY_MS;
+  const handled = (repo: string, kind: TaskKind, target: string) => state.seen(repo, kind, target, now, retryDelayMs);
   const out: Candidate[] = [];
 
   if (want('review-pr')) {
@@ -62,10 +68,10 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
       if (s.info.archived) continue;
       for (const pr of s.prs) {
         if (pr.isDraft) continue;
-        if (pr.author.login === login) continue; // cannot review your own PR
+        if (!opts.continuous && pr.author.login === login) continue;
         if (pr.reviews.some((r) => r.author?.login === login)) continue;
         if (pr.labels.some((l) => /no-idlehand|no-bots?/i.test(l.name))) continue;
-        if (state.seen(s.repo, 'review-pr', `pr:${pr.number}`, now)) continue;
+        if (handled(s.repo, 'review-pr', `pr:${pr.number}`)) continue;
         prs.push({ kind: 'review-pr', repo: s.repo, target: `pr:${pr.number}`, label: `review PR #${pr.number} · ${pr.title}`, pr });
       }
     }
@@ -83,9 +89,9 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
         const labels = issue.labels.map((l) => l.name.toLowerCase());
         if (labels.some((l) => cfg.policy.skipIssueLabels.map((x) => x.toLowerCase()).includes(l))) continue;
         if (cfg.policy.issueLabels.length && !labels.some((l) => cfg.policy.issueLabels.map((x) => x.toLowerCase()).includes(l))) continue;
-        if (issue.assignees.length && !issue.assignees.some((a) => a.login === login)) continue; // someone else owns it
+        if (!opts.continuous && issue.assignees.length && !issue.assignees.some((a) => a.login === login)) continue;
         if (new RegExp(`(^|\\D)#${issue.number}(\\D|$)|issue-${issue.number}(\\D|$)`).test(prBodies)) continue; // a PR already references it
-        if (state.seen(s.repo, 'fix-issue', `issue:${issue.number}`, now)) continue;
+        if (handled(s.repo, 'fix-issue', `issue:${issue.number}`)) continue;
         const score = (labels.some((l) => ISSUE_BOOST.includes(l)) ? 1000 : 0) - Date.parse(issue.createdAt) / 1e10;
         issues.push({ kind: 'fix-issue', repo: s.repo, target: `issue:${issue.number}`, label: `fix issue #${issue.number} · ${issue.title}`, issue, score });
       }
@@ -98,9 +104,9 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
     for (const s of scans) {
       if (s.info.archived) continue;
       const last = state.lastCodebaseReview(s.repo);
-      if (last && now.getTime() - Date.parse(last.reviewed_at) < cfg.policy.codebaseReviewIntervalHours * 3_600_000) continue;
+      if (!opts.continuous && last && now.getTime() - Date.parse(last.reviewed_at) < cfg.policy.codebaseReviewIntervalHours * 3_600_000) continue;
       const target = `codebase:${now.toISOString().slice(0, 10)}`;
-      if (state.seen(s.repo, 'review-codebase', target, now)) continue;
+      if (!opts.continuous && handled(s.repo, 'review-codebase', target)) continue;
       out.push({ kind: 'review-codebase', repo: s.repo, target, label: `review codebase · ${s.repo}` });
     }
   }
@@ -115,7 +121,7 @@ export class Scheduler extends EventEmitter {
   stop() {
     if (this.stopped) return;
     this.stopped = true;
-    this.emitEvent({ type: 'info', message: 'stopping after the current task; no new tasks will start' });
+    this.emitEvent({ type: 'info', message: 'stopping after the running tasks; no new tasks will start' });
   }
 
   async scan(): Promise<{ login: string; scans: RepoScan[] }> {
@@ -158,29 +164,18 @@ export class Scheduler extends EventEmitter {
       }
     }
 
-    const { login, scans } = await this.scan();
-    if (this.stopped) return finish('stopped by user');
-    const candidates = planCandidates(scans, { login, cfg, state, only: this.opts.only });
-    this.emitEvent({ type: 'plan', candidates });
-    if (candidates.length === 0) return finish('nothing to do: no unreviewed PRs, no open issues to attempt, codebases reviewed recently');
-    if (this.opts.dryRun) return finish('dry run: nothing executed');
-
-    const infoByRepo = new Map(scans.map((s) => [s.repo, s.info]));
+    const jobs = this.opts.once ? 1 : Math.max(1, Math.floor(this.opts.jobs ?? 4));
     let index = 0;
-    for (const c of candidates) {
-      if (this.stopped) return finish('stopped by user');
-      usage.elapsedMs = Date.now() - startedAt;
-      const verdict = checkBudget(budget, usage, sub);
-      this.emitEvent({ type: 'budget', usage, verdict });
-      if (!verdict.ok) return finish(`budget reached: ${verdict.reason}`);
+    let reason: string | null = null;
+    const note = (next: string) => { reason ??= next; };
+    const inFlight = new Set<Promise<void>>();
 
-      // Hand the provider the smaller of: what is left, or nothing (unbounded kinds).
+    const execute = async (c: Candidate, infoByRepo: Map<string, RepoInfo>, login: string) => {
       const cap = usdCap(budget, sub);
       const perTaskCap = cap == null ? null : Math.max(0, cap - usage.spentUsd);
       this.emitEvent({ type: 'task-start', candidate: c, index: index++ });
       const taskId = state.startTask({ repo: c.repo, kind: c.kind, target: c.target, provider: provider.name });
       const log = (line: string) => this.emitEvent({ type: 'log', candidate: c, line });
-      // Keep accounting even if verification or publishing throws after the agent ran.
       const accounting: { run?: AgentRunResult } = {};
       const trackedProvider: AgentProvider = {
         name: provider.name,
@@ -215,12 +210,56 @@ export class Scheduler extends EventEmitter {
       reports.push(report);
       this.emitEvent({ type: 'task-done', candidate: c, result, usage });
       if (this.opts.report) await this.opts.report(report).catch((e) => this.emitEvent({ type: 'info', message: `could not report to server: ${(e as Error).message}` }));
-      if (accounting.run?.costUnknown) return finish('provider cost unavailable; stopped to avoid untracked spending');
-      if (this.stopped) return finish('stopped by user');
-      if (this.opts.once) return finish('--once: stopped after one task');
+      if (accounting.run?.costUnknown) note('provider cost unavailable; stopped to avoid untracked spending');
+      else if (this.stopped) note('stopped by user');
+      else if (this.opts.once) note('--once: stopped after one task');
+    };
+
+    for (;;) {
+      if (reason) break;
+      if (this.stopped) { note('stopped by user'); break; }
+      const { login, scans } = await this.scan();
+      if (this.stopped) { note('stopped by user'); break; }
+      const candidates = planCandidates(scans, { login, cfg, state, only: this.opts.only, continuous: this.opts.continuous });
+      this.emitEvent({ type: 'plan', candidates });
+      if (candidates.length === 0) {
+        if (this.opts.continuous && !this.opts.dryRun) {
+          if (inFlight.size) await Promise.race(inFlight);
+          continue;
+        }
+        note('nothing to do: no unreviewed PRs, no open issues to attempt, codebases reviewed recently');
+        break;
+      }
+      if (this.opts.dryRun) { note('dry run: nothing executed'); break; }
+
+      const infoByRepo = new Map(scans.map((s) => [s.repo, s.info]));
+      for (const c of candidates) {
+        while (inFlight.size >= jobs) await Promise.race(inFlight);
+        if (reason || this.stopped) { if (this.stopped) note('stopped by user'); break; }
+        usage.elapsedMs = Date.now() - startedAt;
+        const projected = budget.kind === 'tasks' ? { ...usage, tasksCompleted: usage.tasksCompleted + inFlight.size } : usage;
+        const verdict = checkBudget(budget, projected, sub);
+        this.emitEvent({ type: 'budget', usage, verdict });
+        if (!verdict.ok) {
+          const live = checkBudget(budget, usage, sub);
+          note(`budget reached: ${live.ok ? `${usage.tasksCompleted + inFlight.size} task(s) already running or finished` : live.reason}`);
+          break;
+        }
+        let tracked!: Promise<void>;
+        tracked = execute(c, infoByRepo, login).finally(() => inFlight.delete(tracked));
+        inFlight.add(tracked);
+      }
+      if (reason || this.stopped) { if (this.stopped) note('stopped by user'); break; }
+      if (!this.opts.continuous) {
+        await Promise.all(inFlight);
+        usage.elapsedMs = Date.now() - startedAt;
+        const last = checkBudget(budget, usage, sub);
+        note(last.ok ? 'all available work done' : `budget reached: ${last.reason}`);
+        break;
+      }
+      if (inFlight.size) await Promise.race(inFlight);
     }
-    usage.elapsedMs = Date.now() - startedAt;
-    const last = checkBudget(budget, usage, sub);
-    return finish(last.ok ? 'all available work done' : `budget reached: ${last.reason}`);
+    await Promise.all(inFlight);
+    return finish(reason ?? 'stopped by user');
   }
 }

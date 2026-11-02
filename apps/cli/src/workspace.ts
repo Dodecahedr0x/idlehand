@@ -2,17 +2,51 @@
  * Local checkouts. One base clone per repo under ~/.idlehand/repos/<owner>/<name>,
  * and a throwaway git worktree per task under ~/.idlehand/work/.
  */
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { exec } from './shell.ts';
 import { REPOS_DIR, WORK_DIR } from './paths.ts';
 
 export class GitError extends Error {}
 
+// One clone is shared. Tasks run in their own worktrees, so git commands on that clone take turns.
+const gitLockHeld = new AsyncLocalStorage<string>();
+const gitLockTail = new Map<string, Promise<void>>();
+let worktreeSeq = 0;
+
+function gitLockKey(cwd?: string): string {
+  if (!cwd) return 'no-cwd';
+  const gitPath = join(cwd, '.git');
+  if (!existsSync(gitPath)) return cwd;
+  try {
+    if (statSync(gitPath).isDirectory()) return cwd;
+    const match = readFileSync(gitPath, 'utf8').match(/^gitdir:\s*(.+)$/m);
+    if (!match) return cwd;
+    let gitdir = resolve(cwd, match[1].trim());
+    const marker = `${sep}worktrees${sep}`;
+    const at = gitdir.lastIndexOf(marker);
+    if (at !== -1) gitdir = gitdir.slice(0, at);
+    return dirname(gitdir);
+  } catch {
+    return cwd;
+  }
+}
+
+async function withGitLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  if (gitLockHeld.getStore() === key) return fn();
+  const prev = gitLockTail.get(key) ?? Promise.resolve();
+  const run = prev.then(() => gitLockHeld.run(key, fn));
+  gitLockTail.set(key, run.then(() => {}, () => {}));
+  return run;
+}
+
 async function git(args: string[], cwd?: string, timeoutMs = 300_000): Promise<string> {
-  const r = await exec(['git', ...args], { cwd, timeoutMs, env: { GIT_TERMINAL_PROMPT: '0' } });
-  if (r.code !== 0) throw new GitError(`git ${args.slice(0, 2).join(' ')} failed: ${r.stderr.trim() || r.stdout.trim()}`);
-  return r.stdout;
+  return withGitLock(gitLockKey(cwd), async () => {
+    const r = await exec(['git', ...args], { cwd, timeoutMs, env: { GIT_TERMINAL_PROMPT: '0' } });
+    if (r.code !== 0) throw new GitError(`git ${args.slice(0, 2).join(' ')} failed: ${r.stderr.trim() || r.stdout.trim()}`);
+    return r.stdout;
+  });
 }
 
 export function baseDir(repo: string): string {
@@ -23,6 +57,10 @@ export function baseDir(repo: string): string {
 /** Clone (first time) or fetch the base checkout. Returns its path. */
 export async function ensureBase(repo: string, defaultBranch: string, log: (l: string) => void): Promise<string> {
   const dir = baseDir(repo);
+  return withGitLock(dir, () => ensureBaseLocked(dir, repo, defaultBranch, log));
+}
+
+async function ensureBaseLocked(dir: string, repo: string, defaultBranch: string, log: (l: string) => void): Promise<string> {
   if (!existsSync(join(dir, '.git'))) {
     mkdirSync(dir, { recursive: true });
     log(`cloning ${repo}…`);
@@ -49,7 +87,8 @@ export interface Worktree {
 /** Create a detached worktree at `ref`, optionally on a fresh branch. */
 export async function makeWorktree(repo: string, base: string, ref: string, slug: string, branch?: string): Promise<Worktree> {
   mkdirSync(WORK_DIR, { recursive: true });
-  const path = join(WORK_DIR, `${repo.replace('/', '-')}-${slug}-${Date.now().toString(36)}`);
+  worktreeSeq += 1;
+  const path = join(WORK_DIR, `${repo.replace('/', '-')}-${slug}-${Date.now().toString(36)}-${worktreeSeq.toString(36)}`);
   const args = ['worktree', 'add', '--quiet'];
   if (branch) args.push('-B', branch);
   else args.push('--detach');
@@ -95,8 +134,10 @@ export async function commitAll(dir: string, message: string): Promise<string> {
 /** Push `branch` from `dir` to `https://github.com/<target>.git` using the gh token for this one push. */
 export async function pushBranch(dir: string, target: string, branch: string, token: string): Promise<void> {
   const url = `https://x-access-token:${token}@github.com/${target}.git`;
-  const r = await exec(['git', 'push', '--force-with-lease', '--quiet', url, `HEAD:refs/heads/${branch}`], { cwd: dir, timeoutMs: 300_000, env: { GIT_TERMINAL_PROMPT: '0' } });
-  if (r.code !== 0) throw new GitError(`git push failed: ${r.stderr.replace(token, '***').trim()}`);
+  await withGitLock(gitLockKey(dir), async () => {
+    const r = await exec(['git', 'push', '--force-with-lease', '--quiet', url, `HEAD:refs/heads/${branch}`], { cwd: dir, timeoutMs: 300_000, env: { GIT_TERMINAL_PROMPT: '0' } });
+    if (r.code !== 0) throw new GitError(`git push failed: ${r.stderr.replace(token, '***').trim()}`);
+  });
 }
 
 /** Drop any worktrees left behind by a crashed run. */

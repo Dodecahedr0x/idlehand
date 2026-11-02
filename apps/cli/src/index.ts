@@ -153,6 +153,11 @@ program
   .option('-r, --repo <owner/name...>', 'only these repos (otherwise: your selections + local repos)', (value: string, previous: string[] = []) => [...previous, repoName(value)])
   .option('--only <kinds>', 'comma list of review-pr,fix-issue,review-codebase', taskKinds)
   .option('--once', 'stop after one task')
+  .option('-j, --jobs <count>', 'how many tasks to run at once, each in its own worktree', (value: string) => {
+    const count = Number(value);
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(count) || count < 1) throw new InvalidArgumentError('expected a positive whole number, for example: idlehand run --jobs 4');
+    return count;
+  }, 4)
   .option('--dry-run', 'plan only, spend nothing')
   .option('--no-report', 'do not send run reports to the server')
   .addHelpText('after', `
@@ -163,10 +168,10 @@ Examples:
   idlehand run --provider claude --budget 10%   Requires subscription.monthlyUsd
   idlehand run --json --budget 45m > run.jsonl
 
-Ctrl+C or q in the dashboard stops after the current task finishes.
-Claude dollar thresholds can overshoot during in-flight calls. Codex has no dollar cap.
+Ctrl+C or q in the dashboard stops after the running tasks finish.
+Claude dollar thresholds can overshoot during in-flight calls. Codex has no dollar cap. Up to 4 tasks run at once (--jobs), each in its own worktree. A dollar budget can overshoot by the tasks already running.
 Dry runs need gh login, but do not need an agent CLI or change saved task records.`)
-  .action(async (opts: { budget?: string; provider?: string; repo?: string[]; only?: TaskKind[]; once?: boolean; dryRun?: boolean; report: boolean }) => {
+  .action(async (opts: { budget?: string; provider?: string; repo?: string[]; only?: TaskKind[]; once?: boolean; jobs?: number; dryRun?: boolean; report: boolean }) => {
     const cfg = loadConfig();
     let budget;
     try { budget = parseBudget(opts.budget ?? cfg.budget); } catch (e) { return fail((e as Error).message); }
@@ -191,7 +196,7 @@ Dry runs need gh login, but do not need an agent CLI or change saved task record
 
     const state = new State();
     const server = cfg.server.token && opts.report ? new ServerClient(cfg.server.url, cfg.server.token) : null;
-    const scheduler = new Scheduler({ repos: list, budget, cfg, provider, state, only, once: opts.once, dryRun: opts.dryRun, report: server ? (r) => server.report(r).then(() => {}) : undefined });
+    const scheduler = new Scheduler({ repos: list, budget, cfg, provider, state, only, once: opts.once, jobs: opts.jobs, dryRun: opts.dryRun, report: server ? (r) => server.report(r).then(() => {}) : undefined });
 
     const tui = process.stdin.isTTY && process.stdout.isTTY && !program.opts().plain && !wantsJson();
     let exitCode = 0;

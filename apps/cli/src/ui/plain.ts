@@ -18,7 +18,7 @@ export function attachPlain(s: Scheduler, budget: Budget, subscriptionUsd?: numb
         e.candidates.forEach((c, i) => w(`  ${String(i + 1).padStart(2)}. [${c.kind}] ${c.repo} — ${c.label}`));
         break;
       case 'task-start': w(`\n▶ ${e.candidate.repo} — ${e.candidate.label}`); break;
-      case 'log': w(`    ${e.line}`); break;
+      case 'log': w(`    ${e.candidate.target}  ${e.line}`); break;
       case 'task-done': {
         estimated ||= e.result.costEstimated;
         const cost = formatCost(e.result.costUsd, e.result.costEstimated, e.result.costUnknown, 3);

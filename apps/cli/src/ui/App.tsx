@@ -23,7 +23,7 @@ const OUTCOME_COLOR: Record<string, string> = { reviewed: 'green', merged: 'gree
 
 export function App({ scheduler, budget, provider, repos, subscriptionUsd, onReady }: AppProps) {
   const [rows, setRows] = useState<Row[]>([]);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<{ target: string; line: string }[]>([]);
   const [info, setInfo] = useState<string>('scanning repositories…');
   const [usage, setUsage] = useState<BudgetUsage>({ spentUsd: 0, tasksCompleted: 0, elapsedMs: 0, providerExhausted: false });
   const [done, setDone] = useState<string | null>(null);
@@ -44,9 +44,8 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onRea
         case 'plan': setRows(e.candidates.map((c) => ({ candidate: c, status: 'pending' }))); setInfo(e.candidates.length ? `${e.candidates.length} task(s) queued` : 'nothing to do'); break;
         case 'task-start':
           setRows((r) => r.map((row) => (row.candidate.target === e.candidate.target && row.candidate.repo === e.candidate.repo ? { ...row, status: 'running' } : row)));
-          setLogs([]);
           break;
-        case 'log': setLogs((l) => [...l, e.line].slice(-14)); break;
+        case 'log': setLogs((l) => [...l, { target: e.candidate.target, line: e.line }].slice(-14)); break;
         case 'task-done':
           setRows((r) => r.map((row) => (row.candidate.target === e.candidate.target && row.candidate.repo === e.candidate.repo ? { ...row, status: 'done', result: e.result } : row)));
           setUsage({ ...e.usage });
@@ -92,10 +91,10 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onRea
     bar = '∞ until the provider says stop';
   }
   const elapsed = `${Math.floor(elapsedMs / 60000)}m ${Math.floor(elapsedMs / 1000) % 60}s`;
-  const running = rows.find((r) => r.status === 'running');
+  const running = rows.filter((r) => r.status === 'running');
   const doneRows = rows.filter((r) => r.status === 'done');
   const pendingRows = rows.filter((r) => r.status === 'pending');
-  const visible = [...doneRows.slice(-4), ...(running ? [running] : []), ...pendingRows.slice(0, 6)];
+  const visible = [...doneRows.slice(-4), ...running, ...pendingRows.slice(0, 6)];
   const hiddenPending = Math.max(0, pendingRows.length - 6);
 
   return (
@@ -105,7 +104,7 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onRea
           <Text bold color="magenta">idlehand</Text>
           <Text dimColor> · {provider} · {repos.length} repo{repos.length === 1 ? '' : 's'}</Text>
         </Text>
-        <Text dimColor>{done ? 'finished' : stopping ? 'stopping after this task… ' : 'q / Ctrl+C to stop after this task'}</Text>
+        <Text dimColor>{done ? 'finished' : stopping ? 'stopping after the running tasks… ' : 'q / Ctrl+C to stop after the running tasks'}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         <Text>
@@ -155,10 +154,10 @@ export function App({ scheduler, budget, provider, repos, subscriptionUsd, onRea
         {hiddenPending > 0 && <Text dimColor>  … {hiddenPending} more queued</Text>}
       </Box>
 
-      {running && (
+      {running.length > 0 && (
         <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-          <Text dimColor>{running.candidate.repo} — {running.candidate.label}</Text>
-          {logs.length === 0 ? <Text dimColor>…</Text> : logs.map((l, i) => <Text key={i} wrap="truncate">{l}</Text>)}
+          <Text dimColor>{running.length === 1 ? `${running[0]!.candidate.repo} — ${running[0]!.candidate.label}` : `${running.length} tasks running`}</Text>
+          {logs.length === 0 ? <Text dimColor>…</Text> : logs.map((l, i) => <Text key={i} wrap="truncate"><Text dimColor>{l.target} </Text>{l.line}</Text>)}
         </Box>
       )}
 

@@ -76,6 +76,7 @@ idlehand run [options]               spend the budget
     -r, --repo     owner/name ...      restrict this run
     --only         review-pr,fix-issue,review-codebase
     --once         stop after one task
+    -j, --jobs     tasks to run at once (default 4); each gets its own worktree
     --dry-run      plan only
 idlehand status [--limit 15]         spend this month and recent tasks (-n also works)
 idlehand doctor                      environment checks
@@ -85,7 +86,7 @@ Run `idlehand` for a quick start, or `idlehand <command> --help` for examples. B
 
 Global flags: `--plain` for line output, `--json` for one JSON value per line. Without terminal input and output the CLI picks `--plain` automatically. In JSON mode, errors and warnings are JSON records on stderr, leaving stdout available for command results and run events. Exit codes are `0` for success, `1` for a command or setup error, and `2` when one or more run tasks failed. `doctor` uses the same exit status in human and JSON modes; an unavailable server or unselected provider is optional.
 
-Use `--dry-run` to preview the queue using your GitHub login. It does not require Claude Code or Codex, spend credits, change saved task outcomes, or prune checkouts. During a run, press **Ctrl+C** (or **q** in the dashboard) to stop after the current task finishes; no further tasks start. The dashboard shows live elapsed time and marks estimated spending with `≈`.
+Use `--dry-run` to preview the queue using your GitHub login. It does not require Claude Code or Codex, spend credits, change saved task outcomes, or prune checkouts. During a run, press **Ctrl+C** (or **q** in the dashboard) to stop after the running tasks finish; no further tasks start. The dashboard shows live elapsed time and marks estimated spending with `≈`.
 
 Useful settings (`idlehand config keys` lists them all):
 

@@ -24,7 +24,7 @@ test('scheduler retains charged usage on publishing failure and stops on unknown
         calls++;
         return {output: null, costUsd: unknown ? 0 : 0.75, costEstimated: true, costUnknown: unknown, durationMs: 1, exhausted: false, error: null, sessionId: null, rawTail: ''};
       } };
-      const scheduler = new Scheduler({repos: ['o/r'], budget: parseBudget(unknown ? '3 tasks' : '$0.50'), cfg: structuredClone(DEFAULT_CONFIG), provider, state, only: ['fix-issue']});
+      const scheduler = new Scheduler({repos: ['o/r'], budget: parseBudget(unknown ? '3 tasks' : '$0.50'), cfg: structuredClone(DEFAULT_CONFIG), provider, state, only: ['fix-issue'], jobs: 1});
       scheduler.scan = async () => ({login: 'me', scans: [{repo: 'o/r', info: {archived: false}, prs: [], issues: [1, 2].map(number => ({number, title: 'fix', labels: [], assignees: [], createdAt: '2026-01-01'}))}]});
       const result = await scheduler.run();
       assert.equal(calls, 1);
