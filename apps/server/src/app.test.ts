@@ -22,6 +22,7 @@ const REPOS: RepoInput[] = [
   { owner: 'acme', name: 'rocket', description: 'Goes up', htmlUrl: 'https://github.com/acme/rocket', private: false, defaultBranch: 'main', language: 'Rust', stars: 10 },
   { owner: 'acme', name: 'anvil', description: null, htmlUrl: 'https://github.com/acme/anvil', private: false, defaultBranch: 'main', language: 'Go', stars: 3 },
   { owner: 'other', name: 'lib', description: 'A lib', htmlUrl: 'https://github.com/other/lib', private: false, defaultBranch: 'master', language: 'TypeScript', stars: 99 },
+  { owner: 'alice', name: 'secret', description: 'do not leak this private repo', htmlUrl: 'https://github.com/alice/secret', private: true, defaultBranch: 'main', language: 'TypeScript', stars: 1 },
 ];
 
 class FakeGitHub implements GitHubClient {
@@ -161,6 +162,25 @@ describe('selections and popular', () => {
     expect(after.find((p) => p.fullName === 'acme/rocket')!.selectedBy).toBe(1);
     // tie on count is broken by stars, so other/lib (99 stars) now leads
     expect(after[0]!.fullName).toBe('other/lib');
+  });
+
+  test('selected private repository stays off the public popular list', async () => {
+    const alice = await cookieFor(1);
+    expect((await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'alice', name: 'secret' } })).status).toBe(201);
+    expect((await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'acme', name: 'rocket' } })).status).toBe(201);
+
+    const popular = (await (await req('/api/repos/popular')).json()) as PopularRepo[];
+    expect(popular.map((p) => p.fullName)).toEqual(['acme/rocket']);
+    expect(popular.some((p) => p.private || p.fullName === 'alice/secret')).toBe(false);
+
+    const landing = await (await req('/')).text();
+    expect(landing).toContain('acme/rocket');
+    expect(landing).not.toContain('alice/secret');
+    expect(landing).not.toContain('do not leak this private repo');
+
+    const popularPage = await (await req('/popular')).text();
+    expect(popularPage).toContain('acme/rocket');
+    expect(popularPage).not.toContain('alice/secret');
   });
 
   test('unknown repo is 404; bad body is 400', async () => {
