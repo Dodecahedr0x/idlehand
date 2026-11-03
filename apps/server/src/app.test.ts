@@ -305,6 +305,48 @@ describe('CLI device flow + bearer API', () => {
 });
 
 describe('pages', () => {
+  test('included-repo activity lists only the signed-in account', async () => {
+    const alice = await cookieFor(1);
+    const bob = await cookieFor(2);
+    await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'acme', name: 'rocket' } });
+    await req('/api/selections', { method: 'POST', cookie: bob, json: { owner: 'acme', name: 'rocket' } });
+    const report: RunReport = {
+      repo: { owner: 'acme', name: 'rocket', fullName: 'acme/rocket' },
+      kind: 'fix-issue',
+      provider: 'claude',
+      outcome: 'pr-opened',
+      url: 'https://github.com/acme/rocket/pull/1111',
+      summary: 'alice-own-account-summary-xyz',
+      costUsd: 1.23,
+      costEstimated: false,
+      durationMs: 100,
+      startedAt: '2026-10-30T10:00:00.000Z',
+    };
+    store.addRunReport(1, report);
+    store.addRunReport(2, {
+      ...report,
+      url: 'https://github.com/acme/rocket/issues/9999',
+      summary: 'bob-other-account-summary-xyz',
+      costUsd: 9.87,
+    });
+
+    const aliceHtml = await (await req('/dashboard', { cookie: alice })).text();
+    expect(aliceHtml).toContain('alice-own-account-summary-xyz');
+    expect(aliceHtml).toContain('https://github.com/acme/rocket/pull/1111');
+    expect(aliceHtml).toContain('$1.23');
+    expect(aliceHtml).not.toContain('bob-other-account-summary-xyz');
+    expect(aliceHtml).not.toContain('https://github.com/acme/rocket/issues/9999');
+    expect(aliceHtml).not.toContain('$9.87');
+
+    const bobHtml = await (await req('/dashboard', { cookie: bob })).text();
+    expect(bobHtml).toContain('bob-other-account-summary-xyz');
+    expect(bobHtml).toContain('https://github.com/acme/rocket/issues/9999');
+    expect(bobHtml).toContain('$9.87');
+    expect(bobHtml).not.toContain('alice-own-account-summary-xyz');
+    expect(bobHtml).not.toContain('https://github.com/acme/rocket/pull/1111');
+    expect(bobHtml).not.toContain('$1.23');
+  });
+
   test('landing shows popular and sign-in', async () => {
     const alice = await cookieFor(1);
     await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'other', name: 'lib' } });
