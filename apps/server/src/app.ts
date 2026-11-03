@@ -44,8 +44,7 @@ export function createApp(deps: AppDeps) {
   app.notFound((c) => (c.req.path.startsWith('/api/') ? c.json({ error: 'not found' }, 404) : c.html(html`${Message({ title: 'This page wandered off.', description: 'The link may have changed. Head back home or explore a project to support.' })}`, 404)));
   app.onError((err, c) => {
     console.error(err);
-    const msg = err instanceof Error ? err.message : 'internal error';
-    return c.req.path.startsWith('/api/') ? c.json({ error: msg }, 500) : c.html(html`${Message({ title: 'Something interrupted that.', description: 'We couldn’t load this page. Please try again in a moment.' })}`, 500);
+    return c.req.path.startsWith('/api/') ? c.json({ error: 'internal error' }, 500) : c.html(html`${Message({ title: 'Something interrupted that.', description: 'We couldn’t load this page. Please try again in a moment.' })}`, 500);
   });
   return app;
 }

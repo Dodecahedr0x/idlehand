@@ -185,6 +185,17 @@ describe('selections and popular', () => {
   });
 });
 
+describe('API errors', () => {
+  test('internal failures hide exception text from the JSON body', async () => {
+    store.listPopular = () => {
+      throw new Error('SQLITE_ERROR: no such table: leaked_secrets');
+    };
+    const res = await req('/api/repos/popular');
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'internal error' });
+  });
+});
+
 describe('CLI device flow + bearer API', () => {
   test('end to end', async () => {
     const alice = await cookieFor(1);
