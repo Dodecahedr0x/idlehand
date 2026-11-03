@@ -46,7 +46,7 @@ ${repoBlock(repo, defaultBranch)}
 
 ## The issue
 #${issue.number}: ${issue.title}
-Labels: ${labels}. Opened by @${issue.author.login} on ${issue.createdAt.slice(0, 10)}.
+Labels: ${labels}. Opened by @${issue.author?.login ?? 'ghost'} on ${issue.createdAt.slice(0, 10)}.
 
 ${issue.body?.trim() || '(no description)'}
 
@@ -70,7 +70,7 @@ export function reviewPrPrompt(repo: string, pr: PrDetail, diff: string, canMerg
   return `You are a senior maintainer reviewing a pull request. The PR branch is checked out in this directory, so you can read the full files and run the tests. Be rigorous, specific and kind. ${canMerge ? 'Your approval may cause the PR to be merged automatically, so only approve what you would merge yourself.' : ''}
 
 Repository: https://github.com/${repo}
-PR #${pr.number}: ${pr.title} by @${pr.author.login} (\`${pr.headRefName}\` → \`${pr.baseRefName}\`)
+PR #${pr.number}: ${pr.title} by @${pr.author?.login ?? 'ghost'} (\`${pr.headRefName}\` → \`${pr.baseRefName}\`)
 
 ## Description
 ${pr.body?.trim() || '(no description)'}
