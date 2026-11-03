@@ -1,0 +1,42 @@
+# Idlehand web service. The CLI stays on the contributor's machine.
+# SQLite lives on a persistent disk, so this service is single-instance
+# and deploys with a short interruption. Free instances cannot attach a disk.
+services:
+  - type: web
+    name: idlehand
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: bun install --frozen-lockfile
+    startCommand: bun run --cwd apps/server start
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - apps/server/**
+        - packages/shared/**
+        - package.json
+        - bun.lock
+        - render.yaml
+        - .bun-version
+    disk:
+      name: idlehand-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: BUN_VERSION
+        value: "1.4.4"
+      - key: DB_PATH
+        value: /var/data/idlehand.sqlite
+      - key: GITHUB_OAUTH_SCOPES
+        value: read:user
+      - key: BASE_URL
+        fromService:
+          name: idlehand
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
