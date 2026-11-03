@@ -370,12 +370,12 @@ export class Store {
       .map(runReportRowToStored);
   }
 
-  listRunReportsForRepo(fullName: string, limit: number): StoredRunReport[] {
+  listRunReportsForRepo(userId: number, fullName: string, limit: number): StoredRunReport[] {
     return this.db
-      .query<RunReportRow, [string, number]>(
-        `${RUN_REPORT_SELECT} WHERE rr.repo_full_name = ? COLLATE NOCASE ORDER BY rr.created_at DESC LIMIT ?`,
+      .query<RunReportRow, [number, string, number]>(
+        `${RUN_REPORT_SELECT} WHERE rr.user_id = ? AND rr.repo_full_name = ? COLLATE NOCASE ORDER BY rr.created_at DESC LIMIT ?`,
       )
-      .all(fullName, limit)
+      .all(userId, fullName, limit)
       .map(runReportRowToStored);
   }
 }

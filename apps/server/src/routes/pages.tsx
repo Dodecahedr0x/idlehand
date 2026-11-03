@@ -58,7 +58,7 @@ export function pageRoutes() {
         page={page}
         hasMore={mine.length >= 50}
         reposError={reposError}
-        runsFor={(fullName) => store.listRunReportsForRepo(fullName, 5)}
+        runsFor={(fullName) => store.listRunReportsForRepo(user.id, fullName, 5)}
       />,
     );
   });

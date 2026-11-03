@@ -26,7 +26,7 @@ test('server accounting migrates existing reports and preserves unknown costs ac
     store = new Store(path);
     expect(store.getRunReport(unknown.id)).toMatchObject({ costUsd: 1.25, costUnknown: true });
     expect(store.listRunReportsForUser(1, 10).find((r) => r.id === unknown.id)?.costUnknown).toBe(true);
-    expect(store.listRunReportsForRepo('o/r', 10).find((r) => r.id === unknown.id)?.costUnknown).toBe(true);
+    expect(store.listRunReportsForRepo(1, 'o/r', 10).find((r) => r.id === unknown.id)?.costUnknown).toBe(true);
   } finally {
     store?.close();
     rmSync(root, { recursive: true, force: true });
