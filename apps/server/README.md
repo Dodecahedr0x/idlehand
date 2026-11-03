@@ -49,4 +49,4 @@ GitHub OAuth still requires your own configured OAuth app for a live sign-in tes
 The default sign-in scope remains `read:user`; the web app does not change the
 local CLI's GitHub permissions.
 
-The public `/install` guide builds the local CLI from the source repository. Dashboard setup status confirms a CLI only after it authenticates with a still-present token. Successful contribution reports complete the first-contribution step; failed, unverified, and nothing-found results have separate guidance. Refresh the dashboard after login and `idlehand doctor` or a run to update that status.
+The public `/install` guide downloads the published macOS and Linux CLI binaries (with SHA-256 checksums) and logs in to this server. Dashboard setup status confirms a CLI only after it authenticates with a still-present token. Successful contribution reports complete the first-contribution step; failed, unverified, and nothing-found results have separate guidance. Refresh the dashboard after login and `idlehand doctor` or a run to update that status.

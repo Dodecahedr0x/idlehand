@@ -55,7 +55,7 @@ bun run dev
 bun run cli run --budget '$5'
 ```
 
-To build a standalone binary: `bun run --cwd apps/cli build` writes `apps/cli/dist/idlehand`.
+Published macOS and Linux binaries (with SHA-256 checksums) are on [GitHub Releases](https://github.com/Dodecahedr0x/idlehand/releases). A version tag such as `v0.1.0` builds and publishes those archives. To build a standalone binary from this checkout: `bun run --cwd apps/cli build` writes `apps/cli/dist/idlehand`.
 The standalone build excludes Ink's optional React DevTools connection.
 
 Without the web service, add repos locally: `idlehand repos add owner/name`.

@@ -1,0 +1,43 @@
+# Publish the Bun idlehand CLI for macOS and Linux when a version tag is pushed.
+# Create the tag on the default branch, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install
+      - name: Build and checksum archives
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage
+          for target in bun-linux-x64 bun-linux-arm64 bun-darwin-x64 bun-darwin-arm64; do
+            spec=${target#bun-}
+            bun build --compile --target="$target" --external '*/devtools.js' --outfile dist/stage/idlehand apps/cli/src/index.ts
+            tar -C dist/stage -czf "dist/idlehand-${spec}.tar.gz" idlehand
+          done
+          cd dist
+          sha256sum idlehand-darwin-arm64.tar.gz idlehand-darwin-x64.tar.gz idlehand-linux-x64.tar.gz idlehand-linux-arm64.tar.gz > SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/idlehand-darwin-arm64.tar.gz \
+            dist/idlehand-darwin-x64.tar.gz \
+            dist/idlehand-linux-x64.tar.gz \
+            dist/idlehand-linux-arm64.tar.gz \
+            dist/SHA256SUMS \
+            --title "Idlehand CLI ${GITHUB_REF_NAME}" \
+            --generate-notes

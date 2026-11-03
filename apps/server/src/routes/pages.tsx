@@ -32,7 +32,8 @@ export function pageRoutes() {
 
   r.get('/install', (c) => {
     const user = c.get('user');
-    return c.html(<Install me={user ? userToMe(user) : null} />);
+    const { config } = c.get('deps');
+    return c.html(<Install me={user ? userToMe(user) : null} baseUrl={config.baseUrl} />);
   });
 
   r.get('/dashboard', async (c) => {

@@ -1,4 +1,6 @@
 import { describe, expect, test, beforeEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DeviceCodePoll, DeviceCodeStart, PopularRepo, RunReport, SelectedRepo, StoredRunReport } from '@idlehand/shared';
 import { createApp } from './app.ts';
 import { Store, type RepoInput } from './db.ts';
@@ -322,11 +324,17 @@ describe('first contribution setup', () => {
     const install = await req('/install');
     expect(install.status).toBe(200);
     const guide = await install.text();
-    expect(guide).toContain('git clone https://github.com/Dodecahedr0x/idlehand.git');
-    expect(guide).toContain('bun run --cwd apps/cli build');
-    expect(guide).toContain('apps/cli/dist/idlehand');
+    expect(guide).toContain('https://github.com/Dodecahedr0x/idlehand/releases/latest/download');
+    expect(guide).toContain('idlehand-darwin-arm64.tar.gz');
+    expect(guide).toContain('idlehand-darwin-x64.tar.gz');
+    expect(guide).toContain('idlehand-linux-x64.tar.gz');
+    expect(guide).toContain('idlehand-linux-arm64.tar.gz');
+    expect(guide).toContain('SHA256SUMS');
+    expect(guide).toContain('idlehand login --server http://localhost:8787');
     expect(guide).toContain('gh auth login');
     expect(guide).toContain('shell profile');
+    expect(guide).not.toContain('git clone https://github.com/Dodecahedr0x/idlehand.git');
+    expect(guide).not.toContain('bun run --cwd apps/cli build');
     expect(await (await req('/')).text()).toContain('href="/install"');
     const dashboard = await (await req('/dashboard', { cookie: await cookieFor(1) })).text();
     expect(dashboard).toContain('href="/install"');
@@ -336,6 +344,31 @@ describe('first contribution setup', () => {
     expect(dashboard).toContain("idlehand run --provider cursor --budget &#39;1 task&#39; --once");
     expect(dashboard).toContain('no dollar cap');
     expect(dashboard).toContain('CLI not connected yet');
+  });
+
+  test('install page login uses the hosted server URL', async () => {
+    const hosted = createApp({
+      config: { ...config, baseUrl: 'https://idlehand.example' },
+      store,
+      github: new FakeGitHub(),
+    });
+    const guide = await (await hosted.request('http://localhost/install')).text();
+    expect(guide).toContain('idlehand login --server https://idlehand.example');
+    expect(guide).not.toContain('bun run --cwd apps/cli build');
+  });
+
+  test('a version tag publishes macOS and Linux CLI archives with checksums', () => {
+    const yml = readFileSync(join(import.meta.dir, '../../../.github/workflows/release.yml'), 'utf8');
+    expect(yml).toMatch(/tags:\s*\n\s*-\s*'v/);
+    expect(yml).toContain('bun build --compile');
+    expect(yml).toContain('bun-darwin-arm64');
+    expect(yml).toContain('bun-darwin-x64');
+    expect(yml).toContain('bun-linux-x64');
+    expect(yml).toContain('bun-linux-arm64');
+    expect(yml).toContain('SHA256SUMS');
+    expect(yml).toContain('idlehand-darwin-arm64.tar.gz');
+    expect(yml).toContain('gh release create');
+    expect(yml).not.toContain('cargo build');
   });
 
   test('connection requires actual token use and never leaks another account or stale approval', async () => {
