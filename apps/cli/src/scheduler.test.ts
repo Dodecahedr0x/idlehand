@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { planCandidates, type RepoScan } from './scheduler.ts';
+import { isGhRateLimitMessage, planCandidates, Scheduler, type RepoScan } from './scheduler.ts';
 import { DEFAULT_CONFIG } from './config.ts';
 import { State, TASK_RETRY_DELAY_MS } from './state.ts';
+import { parseBudget } from '@idlehand/shared';
 import type { IssueSummary, PrSummary, RepoInfo } from './gh.ts';
 
 const info = (over: Partial<RepoInfo> = {}): RepoInfo => ({ full_name: 'o/r', default_branch: 'main', private: false, fork: false, archived: false, html_url: '', clone_url: '', permissions: { admin: false, push: false, pull: true }, ...over });
@@ -94,5 +95,114 @@ describe('planCandidates', () => {
     } finally {
       b.state.close();
     }
+  });
+});
+
+const idleProvider = {
+  name: 'claude' as const,
+  supportsUsdBudget: true,
+  check: async () => ({ ok: true, detail: '' }),
+  run: async () => { throw new Error('provider should not run'); },
+};
+
+describe('Scheduler empty-queue polling', () => {
+  test('continuous mode waits between empty-queue scans', async () => {
+    const state = new State(':memory:');
+    try {
+      let scans = 0;
+      const scheduler = new Scheduler({
+        repos: ['o/r'],
+        budget: parseBudget('remaining'),
+        cfg: structuredClone(DEFAULT_CONFIG),
+        provider: idleProvider,
+        state,
+        only: ['review-pr'],
+        continuous: true,
+        jobs: 1,
+        idlePollMs: 40,
+      });
+      scheduler.scan = async () => {
+        scans += 1;
+        if (scans >= 8) scheduler.stop();
+        return { login: 'me', scans: [{ repo: 'o/r', info: info(), prs: [], issues: [] }] };
+      };
+      const t0 = Date.now();
+      const result = await scheduler.run();
+      const elapsed = Date.now() - t0;
+      expect(scans).toBe(8);
+      expect(elapsed).toBeGreaterThanOrEqual(200);
+      expect(result.reason).toBe('stopped by user');
+    } finally {
+      state.close();
+    }
+  });
+
+  test('backs off longer after a GitHub rate-limit during scan', async () => {
+    const state = new State(':memory:');
+    try {
+      let scans = 0;
+      const scheduler = new Scheduler({
+        repos: ['o/r'],
+        budget: parseBudget('remaining'),
+        cfg: structuredClone(DEFAULT_CONFIG),
+        provider: idleProvider,
+        state,
+        only: ['review-pr'],
+        continuous: true,
+        jobs: 1,
+        idlePollMs: 10,
+        rateLimitBackoffMs: 50,
+      });
+      scheduler.scan = async () => {
+        scans += 1;
+        if (scans >= 6) scheduler.stop();
+        return { login: 'me', scans: [{ repo: 'o/r', info: info(), prs: [], issues: [] }], rateLimited: true };
+      };
+      const t0 = Date.now();
+      await scheduler.run();
+      expect(scans).toBe(6);
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(200);
+    } finally {
+      state.close();
+    }
+  });
+
+  test('stop() wakes an empty-queue idle wait', async () => {
+    const state = new State(':memory:');
+    try {
+      let scans = 0;
+      const scheduler = new Scheduler({
+        repos: ['o/r'],
+        budget: parseBudget('remaining'),
+        cfg: structuredClone(DEFAULT_CONFIG),
+        provider: idleProvider,
+        state,
+        only: ['review-pr'],
+        continuous: true,
+        jobs: 1,
+        idlePollMs: 10_000,
+      });
+      scheduler.scan = async () => {
+        scans += 1;
+        return { login: 'me', scans: [{ repo: 'o/r', info: info(), prs: [], issues: [] }] };
+      };
+      const pending = scheduler.run();
+      await Bun.sleep(30);
+      const t0 = Date.now();
+      scheduler.stop();
+      const result = await pending;
+      expect(Date.now() - t0).toBeLessThan(500);
+      expect(result.reason).toBe('stopped by user');
+      expect(scans).toBe(1);
+    } finally {
+      state.close();
+    }
+  });
+
+  test('detects GitHub rate-limit error text', () => {
+    expect(isGhRateLimitMessage('gh api repos/o/r failed (1): HTTP 403: API rate limit exceeded for user')).toBe(true);
+    expect(isGhRateLimitMessage('You have exceeded a secondary rate limit')).toBe(true);
+    expect(isGhRateLimitMessage('HTTP 429: too many requests')).toBe(true);
+    expect(isGhRateLimitMessage('skipping o/r: Not Found')).toBe(false);
   });
 });

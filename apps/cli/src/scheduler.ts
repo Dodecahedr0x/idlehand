@@ -39,7 +39,20 @@ export interface SchedulerOptions {
   jobs?: number;
   /** Keep scanning until the budget is spent. No cooldowns, and author is ignored. */
   continuous?: boolean;
+  /** How long to wait between empty-queue scans. Default 30s. */
+  idlePollMs?: number;
+  /** Extra wait after a GitHub rate-limit error. Default 2 minutes. */
+  rateLimitBackoffMs?: number;
   report?: (r: RunReport) => Promise<void>;
+}
+
+/** Pause between empty-queue GitHub scans in continuous mode. */
+export const EMPTY_QUEUE_POLL_MS = 30_000;
+/** Longer pause when `gh` reports a rate limit. */
+export const RATE_LIMIT_BACKOFF_MS = 120_000;
+
+export function isGhRateLimitMessage(message: string): boolean {
+  return /API rate limit|secondary rate limit|HTTP 429|too many requests/i.test(message);
 }
 
 export interface RepoScan {
@@ -115,6 +128,7 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
 
 export class Scheduler extends EventEmitter {
   private stopped = false;
+  private waiting: (() => void) | null = null;
   constructor(private opts: SchedulerOptions) { super(); }
 
   emitEvent(e: SchedulerEvent) { this.emit('event', e); }
@@ -122,11 +136,26 @@ export class Scheduler extends EventEmitter {
     if (this.stopped) return;
     this.stopped = true;
     this.emitEvent({ type: 'info', message: 'stopping after the running tasks; no new tasks will start' });
+    this.waiting?.();
   }
 
-  async scan(): Promise<{ login: string; scans: RepoScan[] }> {
+  private idle(ms: number): Promise<void> {
+    if (this.stopped || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        if (this.waiting === done) this.waiting = null;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.waiting = done;
+    });
+  }
+
+  async scan(): Promise<{ login: string; scans: RepoScan[]; rateLimited?: boolean }> {
     const login = await currentLogin();
     const scans: RepoScan[] = [];
+    let rateLimited = false;
     for (const repo of this.opts.repos) {
       if (this.stopped) break;
       try {
@@ -134,10 +163,12 @@ export class Scheduler extends EventEmitter {
         const [info, prs, issues] = await Promise.all([repoInfo(repo), listOpenPrs(repo), listOpenIssues(repo)]);
         scans.push({ repo, info, prs, issues });
       } catch (e) {
-        this.emitEvent({ type: 'info', message: `skipping ${repo}: ${(e as Error).message.split('\n')[0]}` });
+        const message = (e as Error).message;
+        if (isGhRateLimitMessage(message)) rateLimited = true;
+        this.emitEvent({ type: 'info', message: `skipping ${repo}: ${message.split('\n')[0]}` });
       }
     }
-    return { login, scans };
+    return { login, scans, rateLimited };
   }
 
   async run(): Promise<{ reports: RunReport[]; usage: BudgetUsage; reason: string }> {
@@ -218,13 +249,26 @@ export class Scheduler extends EventEmitter {
     for (;;) {
       if (reason) break;
       if (this.stopped) { note('stopped by user'); break; }
-      const { login, scans } = await this.scan();
+      const { login, scans, rateLimited } = await this.scan();
       if (this.stopped) { note('stopped by user'); break; }
       const candidates = planCandidates(scans, { login, cfg, state, only: this.opts.only, continuous: this.opts.continuous });
       this.emitEvent({ type: 'plan', candidates });
       if (candidates.length === 0) {
         if (this.opts.continuous && !this.opts.dryRun) {
           if (inFlight.size) await Promise.race(inFlight);
+          else {
+            const delay = rateLimited
+              ? (this.opts.rateLimitBackoffMs ?? RATE_LIMIT_BACKOFF_MS)
+              : (this.opts.idlePollMs ?? EMPTY_QUEUE_POLL_MS);
+            const wait = delay >= 1000 ? `${Math.round(delay / 1000)}s` : `${delay}ms`;
+            this.emitEvent({
+              type: 'info',
+              message: rateLimited
+                ? `GitHub rate limit; waiting ${wait} before scanning again`
+                : `queue empty; scanning again in ${wait}`,
+            });
+            await this.idle(delay);
+          }
           continue;
         }
         note('nothing to do: no unreviewed PRs, no open issues to attempt, codebases reviewed recently');
