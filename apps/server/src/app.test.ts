@@ -315,6 +315,38 @@ describe('pages', () => {
     const popular = await (await req('/popular', { cookie: alice })).text();
     expect(popular).toContain('Included ✓');
   });
+
+  test('public data page states what is stored, how long it lasts, and is linked from sign-in and the footer', async () => {
+    const res = await req('/data');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('What Idlehand stores');
+    expect(html).toContain('GitHub user id');
+    expect(html).toContain('login');
+    expect(html).toContain('name');
+    expect(html).toContain('avatar URL');
+    expect(html).toContain('OAuth access token');
+    expect(html).toContain('CLI tokens');
+    expect(html).toContain('repository selections');
+    expect(html).toContain('run-report summaries');
+    expect(html).toContain('30 days');
+    expect(html).toContain('session cookie');
+    expect(html).toContain('do not expire');
+    expect(html).toContain('Signing out clears that session cookie');
+    expect(html).toContain('does not revoke');
+    const login = await (await req('/login')).text();
+    expect(login).toContain('href="/data"');
+    expect(await (await req('/')).text()).toContain('href="/data"');
+  });
+
+  test('logout clears only the session cookie', async () => {
+    const token = store.approveDeviceCode(store.createDeviceCode(60_000).device_code, 1, 'cli');
+    const res = await req('/logout', { method: 'POST', cookie: await cookieFor(1) });
+    expect(res.status).toBe(302);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=`) && /Max-Age=0/i.test(c))).toBe(true);
+    expect(store.getUser(1)?.access_token).toBe('tok-alice');
+    expect(store.userForCliToken(token)?.id).toBe(1);
+  });
 });
 
 describe('first contribution setup', () => {

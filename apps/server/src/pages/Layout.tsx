@@ -319,7 +319,7 @@ export const Layout: FC<PropsWithChildren<{ title?: string; me: Me | null; activ
           </nav>
         </header>
         <main id="main" tabindex={-1}>{children}</main>
-        <footer><a class="brand" href="/">idlehand</a><p>A little of your idle time. A little better open source.<br />Your machine does the work. You set the limits.</p><a class="text-link" href="/popular">Find a project ↗</a></footer>
+        <footer><a class="brand" href="/">idlehand</a><p>A little of your idle time. A little better open source.<br />Your machine does the work. You set the limits. <a href="/data">What we store</a></p><a class="text-link" href="/popular">Find a project ↗</a></footer>
       </div>
       <div id="feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true" />
       <script dangerouslySetInnerHTML={{ __html: JS }} />
