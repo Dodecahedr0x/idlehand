@@ -2,7 +2,7 @@
 import { exec, which } from './shell.ts';
 
 export function githubRepoFromRemote(url: string): string | null {
-  const m = url.trim().replace(/\.git$/, '').match(/github\.com[:/]([\w.-]+\/[\w.-]+)$/);
+  const m = url.trim().replace(/\/+$/, '').replace(/\.git$/, '').match(/github\.com[:/]([\w.-]+\/[\w.-]+)$/);
   return m?.[1] ?? null;
 }
 
