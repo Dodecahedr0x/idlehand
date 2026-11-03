@@ -27,6 +27,9 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   if (!githubClientId || !githubClientSecret) {
     console.warn('[idlehand] GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET not set; "Sign in with GitHub" will fail. See .env.example');
   }
+  if (isProd && env.IDLEHAND_DEV_LOGIN === '1') {
+    throw new Error('IDLEHAND_DEV_LOGIN cannot be enabled when BASE_URL is https or NODE_ENV=production');
+  }
   return {
     port: Number(env.PORT ?? 8787),
     baseUrl,
@@ -35,7 +38,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     githubScopes: env.GITHUB_OAUTH_SCOPES ?? 'read:user',
     sessionSecret,
     dbPath: env.DB_PATH ?? './idlehand.sqlite',
-    devLogin: env.IDLEHAND_DEV_LOGIN === '1',
+    devLogin: !isProd && env.IDLEHAND_DEV_LOGIN === '1',
     devRepos: (env.IDLEHAND_DEV_REPO ?? '').split(',').map((s) => s.trim()).filter((s) => /^[\w.-]+\/[\w.-]+$/.test(s)),
   };
 }
