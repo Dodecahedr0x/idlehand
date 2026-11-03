@@ -2,12 +2,41 @@ import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
 import { PROVIDERS, type RunReport, type DeviceCodeStart, type DeviceCodePoll } from '@idlehand/shared';
 import type { AppEnv } from '../app.ts';
-import { repoRowToCard, userToMe, type RepoInput, type UserRow } from '../db.ts';
+import { repoInputToCard, repoRowToCard, userToMe, type RepoInput, type UserRow } from '../db.ts';
 
 const DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
+const ANON_SEARCH_LIMIT = 10;
+const DEVICE_CODE_LIMIT = 5;
+const RATE_LIMIT_WINDOW_MS = 60_000;
 const KINDS = new Set(['review-pr', 'fix-issue', 'review-codebase']);
 const PROVIDER_NAMES = new Set<string>(PROVIDERS);
 const OUTCOMES = new Set(['reviewed', 'merged', 'pr-opened', 'issues-filed', 'nothing-found', 'unverified', 'failed']);
+
+/** ponytail: in-memory per-client window; restart clears it. evict idle keys if unique IPs grow. */
+class RateLimiter {
+  private hits = new Map<string, number[]>();
+  constructor(
+    private readonly limit: number,
+    private readonly windowMs: number,
+  ) {}
+  take(key: string): boolean {
+    const now = Date.now();
+    const recent = (this.hits.get(key) ?? []).filter((t) => t > now - this.windowMs);
+    if (recent.length >= this.limit) {
+      this.hits.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    this.hits.set(key, recent);
+    return true;
+  }
+}
+
+function clientKey(c: Context<AppEnv>): string {
+  const forwarded = c.req.header('x-forwarded-for');
+  if (forwarded) return forwarded.split(',')[0]!.trim();
+  return c.req.header('x-real-ip') ?? 'local';
+}
 
 /** Cookie-session guard with a cheap CSRF check for mutations. */
 async function requireSession(c: Context<AppEnv>, next: Next) {
@@ -38,6 +67,8 @@ export async function reposForUser(c: Context<AppEnv>, user: UserRow, page: numb
 
 export function apiRoutes() {
   const r = new Hono<AppEnv>();
+  const searchLimit = new RateLimiter(ANON_SEARCH_LIMIT, RATE_LIMIT_WINDOW_MS);
+  const codeLimit = new RateLimiter(DEVICE_CODE_LIMIT, RATE_LIMIT_WINDOW_MS);
 
   /* ---- browser (cookie) ---- */
 
@@ -91,15 +122,16 @@ export function apiRoutes() {
     const q = (c.req.query('q') ?? '').trim();
     if (!q) return c.json([]);
     const user = c.get('user');
+    if (!user && !searchLimit.take(clientKey(c))) return c.json({ error: 'too many requests' }, 429);
     const inputs = await github.searchRepos(q, user?.access_token);
-    const cards = inputs.map((i) => repoRowToCard(store.upsertRepo(i)));
-    return c.json(store.decorateCards(cards, user?.id ?? null));
+    return c.json(store.decorateCards(inputs.map(repoInputToCard), user?.id ?? null));
   });
 
   /* ---- CLI device flow (no auth) ---- */
 
   r.post('/api/cli/codes', (c) => {
     const { store, config } = c.get('deps');
+    if (!codeLimit.take(clientKey(c))) return c.json({ error: 'too many requests' }, 429);
     const row = store.createDeviceCode(DEVICE_CODE_TTL_MS);
     const out: DeviceCodeStart = {
       deviceCode: row.device_code,
@@ -121,6 +153,7 @@ export function apiRoutes() {
         out = { status: 'pending' };
         break;
       case 'expired':
+        store.consumeDeviceCode(row.device_code);
         out = { status: 'expired' };
         break;
       case 'denied':

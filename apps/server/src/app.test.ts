@@ -183,6 +183,27 @@ describe('selections and popular', () => {
     const anon = (await (await req('/api/repos/search?q=anvil')).json()) as SelectedRepo[];
     expect(anon[0]!.selected).toBeUndefined();
   });
+
+  test('anonymous search does not persist GitHub hits as repos rows', async () => {
+    expect(store.getRepoByFullName('acme/anvil')).toBeNull();
+    const res = await req('/api/repos/search?q=anvil');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject([{ fullName: 'acme/anvil', selectedBy: 0 }]);
+    expect(store.getRepoByFullName('acme/anvil')).toBeNull();
+    const alice = await cookieFor(1);
+    expect((await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'acme', name: 'anvil' } })).status).toBe(201);
+    expect(store.getRepoByFullName('acme/anvil')).toMatchObject({ full_name: 'acme/anvil' });
+  });
+
+  test('anonymous search is rate-limited per client', async () => {
+    const headers = { 'x-forwarded-for': '203.0.113.10' };
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await req('/api/repos/search?q=anvil', { headers })).status);
+    expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true);
+    expect(statuses[10]).toBe(429);
+    expect((await req('/api/repos/search?q=anvil', { headers: { 'x-forwarded-for': '203.0.113.11' } })).status).toBe(200);
+    expect((await req('/api/repos/search?q=anvil', { cookie: await cookieFor(1), headers })).status).toBe(200);
+  });
 });
 
 describe('CLI device flow + bearer API', () => {
@@ -297,6 +318,23 @@ describe('CLI device flow + bearer API', () => {
     const start = (await (await req('/api/cli/codes', { method: 'POST' })).json()) as DeviceCodeStart;
     store.db.query('UPDATE device_codes SET expires_at = ? WHERE device_code = ?').run('2000-01-01T00:00:00.000Z', start.deviceCode);
     expect(await (await req(`/api/cli/codes/${start.deviceCode}`)).json()).toEqual({ status: 'expired' });
+    expect(store.db.query('SELECT 1 FROM device_codes WHERE device_code = ?').get(start.deviceCode)).toBeNull();
+  });
+
+  test('abandoned expired device codes are deleted', async () => {
+    const abandoned = store.createDeviceCode(60_000);
+    store.db.query('UPDATE device_codes SET expires_at = ? WHERE device_code = ?').run('2000-01-01T00:00:00.000Z', abandoned.device_code);
+    expect((await req('/api/cli/codes', { method: 'POST' })).status).toBe(201);
+    expect(store.db.query('SELECT 1 FROM device_codes WHERE device_code = ?').get(abandoned.device_code)).toBeNull();
+  });
+
+  test('device-code creation is rate-limited per client', async () => {
+    const headers = { 'x-forwarded-for': '198.51.100.4' };
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) statuses.push((await req('/api/cli/codes', { method: 'POST', headers })).status);
+    expect(statuses.slice(0, 5).every((s) => s === 201)).toBe(true);
+    expect(statuses[5]).toBe(429);
+    expect((await req('/api/cli/codes', { method: 'POST', headers: { 'x-forwarded-for': '198.51.100.5' } })).status).toBe(201);
   });
 
   test('unknown code', async () => {

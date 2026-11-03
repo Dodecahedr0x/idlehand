@@ -141,6 +141,20 @@ export function repoRowToCard(r: RepoRow): RepoCard {
   };
 }
 
+export function repoInputToCard(r: RepoInput): RepoCard {
+  return {
+    owner: r.owner,
+    name: r.name,
+    fullName: `${r.owner}/${r.name}`,
+    description: r.description,
+    htmlUrl: r.htmlUrl,
+    private: r.private,
+    defaultBranch: r.defaultBranch,
+    language: r.language,
+    stars: r.stars,
+  };
+}
+
 export function userToMe(u: UserRow): Me {
   return { id: u.id, login: u.login, avatarUrl: u.avatar_url, name: u.name };
 }
@@ -265,6 +279,7 @@ export class Store {
   /* ---- device codes ---- */
 
   createDeviceCode(ttlMs: number): DeviceCodeRow {
+    this.purgeExpiredDeviceCodes();
     const deviceCode = randomHex(32);
     let userCode = randomUserCode();
     // extremely unlikely collision; retry a few times
@@ -274,6 +289,11 @@ export class Store {
       .query('INSERT INTO device_codes (device_code, user_code, status, expires_at) VALUES (?, ?, ?, ?)')
       .run(deviceCode, userCode, 'pending', expiresAt);
     return this.getDeviceCode(deviceCode)!;
+  }
+
+  /** Drop expired and leftover abandoned rows (pending past TTL, or already marked expired). */
+  purgeExpiredDeviceCodes(): void {
+    this.db.query(`DELETE FROM device_codes WHERE expires_at < ? OR status = 'expired'`).run(nowIso());
   }
 
   getDeviceCode(deviceCode: string): DeviceCodeRow | null {
