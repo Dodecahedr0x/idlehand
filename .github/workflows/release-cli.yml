@@ -1,0 +1,79 @@
+name: Release CLI
+
+# Publishing a GitHub Release builds the standalone CLI and attaches it to that
+# release. A release event's GITHUB_SHA is the default-branch tip, so the job
+# checks out the release tag explicitly.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  cli:
+    name: Build and publish CLI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Test
+        run: bun test
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build standalone binaries
+        working-directory: apps/cli
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in bun-linux-x64 bun-linux-arm64 bun-darwin-x64 bun-darwin-arm64; do
+            name="idlehand-${target#bun-}"
+            bun build --compile src/index.ts \
+              --external '*/devtools.js' \
+              --target "$target" \
+              --outfile "dist/${name}"
+          done
+
+      - name: Check binaries
+        run: |
+          set -euo pipefail
+          file apps/cli/dist/idlehand-linux-x64 | grep -q 'ELF 64-bit LSB executable, x86-64'
+          file apps/cli/dist/idlehand-linux-arm64 | grep -q 'ELF 64-bit LSB executable, ARM aarch64'
+          file apps/cli/dist/idlehand-darwin-x64 | grep -Eq 'Mach-O 64-bit (executable x86_64|x86_64 executable)'
+          file apps/cli/dist/idlehand-darwin-arm64 | grep -Eq 'Mach-O 64-bit (executable arm64|arm64 executable)'
+          ./apps/cli/dist/idlehand-linux-x64 --version
+
+      - name: Checksums
+        working-directory: apps/cli/dist
+        run: sha256sum idlehand-* > SHA256SUMS
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            apps/cli/dist/idlehand-linux-x64 \
+            apps/cli/dist/idlehand-linux-arm64 \
+            apps/cli/dist/idlehand-darwin-x64 \
+            apps/cli/dist/idlehand-darwin-arm64 \
+            apps/cli/dist/SHA256SUMS \
+            --clobber
