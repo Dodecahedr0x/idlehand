@@ -1,7 +1,7 @@
 import type { Config } from '../config.ts';
 import { formatCost } from '@idlehand/shared';
 import { exec, tail, which } from '../shell.ts';
-import { EXHAUSTED_RE, extractJson, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
+import { EXHAUSTED_RE, agentPrompt, extractJson, noteSession, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
 
 /**
  * Claude Code in headless mode: `claude -p --output-format stream-json`.
@@ -25,12 +25,13 @@ export class ClaudeProvider implements AgentProvider {
     const budgetError = providerBudgetError(this, req.maxBudgetUsd);
     if (budgetError) return refusedRun(budgetError);
     const args = [
-      '-p', req.prompt,
+      '-p', agentPrompt(req),
       '--output-format', 'stream-json', '--verbose',
       '--json-schema', JSON.stringify(req.schema),
       '--permission-mode', this.cfg.permissionMode,
       '--max-turns', String(this.cfg.maxTurns),
     ];
+    if (req.resumeSessionId) args.push('--resume', req.resumeSessionId);
     if (this.cfg.allowedTools.length) args.push('--allowedTools', ...this.cfg.allowedTools);
     if (this.cfg.model) args.push('--model', this.cfg.model);
     if (req.maxBudgetUsd != null) args.push('--max-budget-usd', String(req.maxBudgetUsd));
@@ -48,6 +49,7 @@ export class ClaudeProvider implements AgentProvider {
         let ev: Record<string, unknown>;
         try { ev = JSON.parse(line); } catch { continue; }
         if (!ev || typeof ev !== 'object' || Array.isArray(ev)) continue;
+        noteSession(req, ev.session_id);
         this.describe(ev, req.onLog, seenText);
         if (ev.type === 'result') result = ev;
       }
@@ -57,6 +59,7 @@ export class ClaudeProvider implements AgentProvider {
       cwd: req.cwd,
       timeoutMs: req.timeoutMs,
       onOutput,
+      signal: req.signal,
       env: { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', FORCE_COLOR: '0' },
     });
     if (!result && partial.trim()) { try { const ev = JSON.parse(partial); if (ev && typeof ev === 'object' && ev.type === 'result') result = ev; } catch {} }

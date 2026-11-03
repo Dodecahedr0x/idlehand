@@ -1,7 +1,7 @@
 import { formatCost } from '@idlehand/shared';
 import type { Config } from '../config.ts';
 import { exec, tail, which } from '../shell.ts';
-import { EXHAUSTED_RE, extractJson, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
+import { EXHAUSTED_RE, agentPrompt, extractJson, noteSession, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
 
 /**
  * Cursor CLI in headless mode: `agent -p --output-format stream-json`.
@@ -28,10 +28,11 @@ export class CursorProvider implements AgentProvider {
       return refusedRun('Cursor token prices must be finite nonnegative numbers');
     }
     req.onLog('Cursor has no dollar cap; reported spending is estimated from token usage.');
-    const prompt = `${req.prompt}\n\n## Required JSON schema\nYour final message must be only a JSON object matching this schema:\n${JSON.stringify(req.schema)}`;
+    const prompt = `${agentPrompt(req)}\n\n## Required JSON schema\nYour final message must be only a JSON object matching this schema:\n${JSON.stringify(req.schema)}`;
     const args = ['--print', '--output-format', 'stream-json', '--trust', '--workspace', req.cwd];
     if (this.cfg.force) args.push('--force');
     if (this.cfg.model) args.push('--model', this.cfg.model);
+    if (req.resumeSessionId) args.push('--resume', req.resumeSessionId);
     args.push(prompt);
 
     let result: Record<string, unknown> | null = null;
@@ -42,6 +43,7 @@ export class CursorProvider implements AgentProvider {
       let ev: Record<string, any>;
       try { ev = JSON.parse(line); } catch { return; }
       if (!ev || typeof ev !== 'object' || Array.isArray(ev)) return;
+      noteSession(req, ev.session_id);
       this.describe(ev, req.onLog, seenText);
       if (ev.type === 'result') result = ev;
     };
@@ -53,7 +55,7 @@ export class CursorProvider implements AgentProvider {
       for (const line of lines) parseLine(line);
     };
 
-    const r = await exec([this.cfg.bin, ...args], { cwd: req.cwd, timeoutMs: req.timeoutMs, onOutput, env: { NO_COLOR: '1', FORCE_COLOR: '0' } });
+    const r = await exec([this.cfg.bin, ...args], { cwd: req.cwd, timeoutMs: req.timeoutMs, onOutput, signal: req.signal, env: { NO_COLOR: '1', FORCE_COLOR: '0' } });
     if (partial.trim()) parseLine(partial);
 
     const res = result as Record<string, any> | null;

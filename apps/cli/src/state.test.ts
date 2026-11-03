@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { MAX_TASK_ATTEMPTS, State, TASK_RETRY_DELAY_MS } from './state.ts';
 import type { TaskOutcome } from '@idlehand/shared';
 
@@ -39,6 +42,23 @@ test('completed, inconclusive and active work do not retry automatically', () =>
   const f = fixture();
   f.state.startTask(f.target);
   expect(f.seen(TASK_RETRY_DELAY_MS * 100)).toBe(true);
+});
+
+test('an interrupted task keeps its workspace and session for the next run', () => {
+  const root = mkdtempSync(join(tmpdir(), 'idlehand-checkpoint-'));
+  const first = new State(join(root, 'state.sqlite'));
+  const id = first.startTask({ repo: 'o/r', kind: 'fix-issue', target: 'issue:1', provider: 'claude' });
+  first.saveCheckpoint(id, { worktree: '/tmp/wt', sessionId: 'sess-1', branch: 'idlehand/issue-1' });
+  first.close();
+  const again = new State(join(root, 'state.sqlite'));
+  try {
+    expect(again.listRunning().map((row) => JSON.parse(row.checkpoint!))).toEqual([
+      { worktree: '/tmp/wt', sessionId: 'sess-1', branch: 'idlehand/issue-1' },
+    ]);
+  } finally {
+    again.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('interrupted work can retry after being reaped and cooling down', () => {

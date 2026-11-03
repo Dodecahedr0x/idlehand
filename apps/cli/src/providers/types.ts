@@ -11,6 +11,24 @@ export interface AgentRunRequest {
   maxBudgetUsd: number | null;
   timeoutMs: number;
   onLog: (line: string) => void;
+  /** Abort the provider process. `run` rejects with `Stopped`. */
+  signal?: AbortSignal;
+  /** Continue this provider session instead of starting a new one. */
+  resumeSessionId?: string;
+  /** Called as soon as the provider reports a session id. */
+  onSession?: (id: string) => void;
+  /** Run apart from the task session: do not resume it, and do not replace it. */
+  fresh?: boolean;
+}
+
+export function agentPrompt(req: AgentRunRequest): string {
+  return req.resumeSessionId
+    ? 'You were interrupted. Continue from where you left off and finish the original task. Return only the required JSON.'
+    : req.prompt;
+}
+
+export function noteSession(req: AgentRunRequest, id: unknown) {
+  if (typeof id === 'string' && id) req.onSession?.(id);
 }
 
 export interface AgentRunResult {

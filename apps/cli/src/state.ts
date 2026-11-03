@@ -23,6 +23,28 @@ export interface TaskRow {
   duration_ms: number;
   started_at: string;
   finished_at: string | null;
+  checkpoint: string | null;
+}
+
+export interface TaskCheckpoint {
+  worktree: string;
+  sessionId?: string;
+  branch?: string;
+}
+
+export function parseCheckpoint(raw: string | null | undefined): TaskCheckpoint | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as TaskCheckpoint;
+    if (!value || typeof value.worktree !== 'string' || !value.worktree) return null;
+    return {
+      worktree: value.worktree,
+      sessionId: typeof value.sessionId === 'string' && value.sessionId ? value.sessionId : undefined,
+      branch: typeof value.branch === 'string' && value.branch ? value.branch : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export class State {
@@ -46,7 +68,8 @@ export class State {
         cost_unknown INTEGER NOT NULL DEFAULT 0,
         duration_ms INTEGER NOT NULL DEFAULT 0,
         started_at TEXT NOT NULL,
-        finished_at TEXT
+        finished_at TEXT,
+        checkpoint TEXT
       );
       CREATE INDEX IF NOT EXISTS tasks_repo_target ON tasks(repo, kind, target);
       CREATE TABLE IF NOT EXISTS codebase_reviews (
@@ -55,9 +78,9 @@ export class State {
         sha TEXT NOT NULL
       );
     `);
-    if (!(this.db.query('PRAGMA table_info(tasks)').all() as { name: string }[]).some((c) => c.name === 'cost_unknown')) {
-      this.db.exec('ALTER TABLE tasks ADD COLUMN cost_unknown INTEGER NOT NULL DEFAULT 0');
-    }
+    const columns = this.db.query('PRAGMA table_info(tasks)').all() as { name: string }[];
+    if (!columns.some((c) => c.name === 'cost_unknown')) this.db.exec('ALTER TABLE tasks ADD COLUMN cost_unknown INTEGER NOT NULL DEFAULT 0');
+    if (!columns.some((c) => c.name === 'checkpoint')) this.db.exec('ALTER TABLE tasks ADD COLUMN checkpoint TEXT');
   }
 
   startTask(t: { repo: string; kind: TaskKind; target: string; provider: Provider }): number {
@@ -67,6 +90,14 @@ export class State {
       )
       .get(t.repo, t.kind, t.target, t.provider, new Date().toISOString()) as { id: number };
     return r.id;
+  }
+
+  saveCheckpoint(id: number, checkpoint: TaskCheckpoint) {
+    this.db.query(`UPDATE tasks SET checkpoint=? WHERE id=? AND outcome='running'`).run(JSON.stringify(checkpoint), id);
+  }
+
+  listRunning(): TaskRow[] {
+    return this.db.query(`SELECT * FROM tasks WHERE outcome='running' ORDER BY id`).all() as TaskRow[];
   }
 
   finishTask(id: number, r: { outcome: TaskOutcome; url: string | null; summary: string; costUsd: number; costEstimated: boolean; costUnknown?: boolean; durationMs: number }) {

@@ -63,6 +63,7 @@ export type Provider = (typeof PROVIDERS)[number];
 export type TaskOutcome =
   | 'reviewed' // a PR review was posted
   | 'merged' // PR reviewed and merged
+  | 'closed' // PR reviewed and closed
   | 'pr-opened' // a fix PR was opened for an issue
   | 'issues-filed' // codebase review produced verified issues
   | 'nothing-found' // task ran, found nothing actionable

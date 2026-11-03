@@ -20,7 +20,7 @@ function repoBlock(repo: string, defaultBranch: string) {
 
 export function codebaseReviewPrompt(repo: string, defaultBranch: string, openIssueTitles: string[], maxFindings: number): string {
   const existing = openIssueTitles.length ? openIssueTitles.map((t) => `- ${t}`).join('\n') : '- (none)';
-  return `You are a meticulous open-source maintainer doing a bug-hunting pass over this codebase. Your goal is to find up to ${maxFindings} REAL, REPRODUCIBLE defects worth an issue: crashes, wrong results, data loss, broken builds or tests, security problems, documented behaviour that does not match the code. Not style, not "could be refactored", not missing features.
+  return `You are a meticulous open-source maintainer doing a bug-hunting pass over this codebase. Your goal is to find up to ${maxFindings} REAL, REPRODUCIBLE defects worth an issue: crashes, wrong results, data loss, broken builds or tests, security problems, documented behaviour that does not match the code. Not style, not "could be refactored".
 
 ${repoBlock(repo, defaultBranch)}
 
@@ -38,9 +38,47 @@ Return JSON with \`findings\` (0 to ${maxFindings} items; zero is a perfectly go
 ${CONTRACT}`;
 }
 
+export function failureIssuePrompt(input: { repo: string; branch: string; task: string; failure: string; evidence: string; openIssueTitles: string[] }): string {
+  const existing = input.openIssueTitles.length ? input.openIssueTitles.map((title) => `- ${title}`).join('\n') : '- (none)';
+  const evidence = (input.evidence.trim().slice(-4000) || '(no output captured)').replaceAll('```', "'''");
+  return `You failed during a task. You must consider whether to open an issue about that failure. You do not open it yourself. Propose at most one finding. Zero findings is the right answer when the failure should not become an issue. The runner files a finding only if it can reproduce it on a clean checkout of \`${input.branch}\`.
+
+${repoBlock(input.repo, input.branch)}
+
+## The failed task
+${input.task}
+
+## Failure
+${input.failure}
+
+## Last output
+\`\`\`
+${evidence}
+\`\`\`
+
+## When to propose a finding
+Propose one finding only if this repository has a real defect that caused the failure: a crash, a wrong result, data loss, or a broken build or test on \`${input.branch}\`, and you can reproduce it with a command you ran in this checkout.
+
+## When zero findings is required
+Return zero findings if any of these are true:
+- The failure was your mistake, confusion, or a bug you did not actually reproduce.
+- The provider, credentials, sandbox, budget, or runner stopped you.
+- You timed out without a distinctive failing command.
+- The problem is the task you were already doing: the issue you were fixing, or a defect that exists only on the pull request you were reviewing.
+- An open issue already covers it.
+
+Existing open issues:
+${existing}
+
+## Output
+Return JSON with \`findings\` (0 or 1 item) and \`notes\`. For a finding, \`expect\` must describe what the runner should see on a clean checkout of \`${input.branch}\`.
+
+${CONTRACT}`;
+}
+
 export function fixIssuePrompt(repo: string, defaultBranch: string, issue: IssueSummary, branch: string): string {
   const labels = issue.labels.map((l) => l.name).join(', ') || 'none';
-  return `You are an open-source contributor fixing one issue. Work on branch \`${branch}\` (already checked out).
+  return `You are an open-source contributor fixing one issue. Work on branch \`${branch}\` (already checked out). A draft pull request already reserves this issue. Do not reset, rename, commit, or push the branch. Leave \`.github/idlehand-claim\` untouched; the runner removes it.
 
 ${repoBlock(repo, defaultBranch)}
 
@@ -52,13 +90,14 @@ ${issue.body?.trim() || '(no description)'}
 
 ## How to work
 1. Orient: README, manifest, how tests run. Install deps.
-2. Reproduce FIRST. Write one shell command (run from the repo root) that demonstrates the problem as described, and run it. If you genuinely cannot reproduce after a real attempt, stop and return \`status: "cannot_reproduce"\` with what you tried in \`notes\`. If the issue is a feature request or a question rather than a defect that can be verified by a command, return \`status: "not_a_bug"\` or \`"needs_info"\` with a helpful note. If it would require a large redesign, return \`"too_large"\`.
-3. Fix it minimally, in the project's style. Add or extend a test that fails before and passes after, where the project has a test suite.
-4. Run the relevant tests and your reproduction command again. Both must now pass.
-5. Clean up scratch files that are not part of the fix.
+2. Do not return status "fixed" unless the issue is a defect in the current behaviour, you reproduced that defect with a command, and your change makes that same command pass. A feature request, a question, or a request for documentation, packaging, an installer, deployment, or a workflow is not a defect: return \`status: "not_a_bug"\` or \`"needs_info"\`. If you cannot reproduce the defect, return \`"cannot_reproduce"\`. If the correction would add a new subsystem or edit files unrelated to the defect, return \`"too_large"\`.
+3. Reproduce FIRST. Write one shell command (run from the repo root) that demonstrates the problem as described, and run it. If it does not fail, stop. Do not invent a different bug and fix that instead.
+4. Fix it minimally, in the project's style. Add or extend a test that fails before and passes after, where the project has a test suite. Do not weaken or delete a test to make it pass.
+5. Run the relevant tests and your reproduction command again. Both must now pass.
+6. Clean up scratch files that are not part of the fix.
 
 ## Output
-Return JSON. \`reproduction.command\` is the command from step 2. Use self-contained \`reproduction.setup\` commands to recreate any reproduction harness on the clean default branch as well as the fix checkout; it must not depend on your untracked files being copied. \`expectBefore\` describes its behaviour on the unfixed code (typically nonzero exit + a distinctive output substring). \`expectAfter\` describes it on your fixed code (typically zero exit). \`testCommand\` is the exact test command you ran. The runner will: run \`expectBefore\` on ${defaultBranch}, run \`expectAfter\` and \`testCommand\` on your branch, and only then open a PR. If any of those disagree with you, no PR is opened.
+Return JSON. \`reproduction.command\` is the command from step 3. Use self-contained \`reproduction.setup\` commands to recreate any reproduction harness on the clean default branch as well as the fix checkout; it must not depend on your untracked files being copied. \`expectBefore\` describes its behaviour on the unfixed code (typically nonzero exit + a distinctive output substring). \`expectAfter\` describes it on your fixed code (typically zero exit). \`testCommand\` is the exact test command you ran. The runner will: run \`expectBefore\` on ${defaultBranch}, run \`expectAfter\` and \`testCommand\` on your branch, and only then mark the draft pull request ready. If any of those disagree with you, the draft is closed.
 
 ${CONTRACT}`;
 }
@@ -93,7 +132,8 @@ ${trimmedDiff}
 4. Only report findings you are confident about and can point to a file and line in the NEW version. Prefix uncertain remarks with "Question:".
 
 ## Verdict guidance
-- \`approve\`: correct, tested, scoped. Set \`safeToMerge\` true only if you would merge it as-is.
+- \`approve\`: correct, tested, and a fix for a demonstrated defect. Set \`safeToMerge\` true only if you would merge it as-is.
+- Set \`safeToMerge\` false for a feature, an unrelated refactor, missing tests, or a change that does not fix a defect the tests demonstrate. Request changes or leave a comment instead. When this pull request is the reviewer's own, a verdict that is not safe to merge closes it.
 - \`request_changes\`: at least one \`major\` or \`blocking\` finding.
 - \`comment\`: useful remarks but you cannot judge (e.g. tests cannot run here, or it needs a maintainer decision).
 

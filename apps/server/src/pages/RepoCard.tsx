@@ -2,7 +2,7 @@ import type { FC } from 'hono/jsx';
 import type { RepoCard as Card, StoredRunReport } from '@idlehand/shared';
 import { formatCost } from '@idlehand/shared';
 
-const GOOD = new Set(['reviewed', 'merged', 'pr-opened', 'issues-filed']);
+const GOOD = new Set(['reviewed', 'merged', 'closed', 'pr-opened', 'issues-filed']);
 const MEH = new Set(['nothing-found', 'unverified']);
 const LABELS: Record<string, string> = {
   reviewed: 'Reviewed', merged: 'Merged', 'pr-opened': 'PR opened', 'issues-filed': 'Issues filed',

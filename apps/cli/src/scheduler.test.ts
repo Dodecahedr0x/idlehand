@@ -18,6 +18,56 @@ describe('planCandidates', () => {
     expect(plan.map((c) => c.target)).toEqual(['pr:1', 'pr:3', 'issue:5', expect.stringMatching(/^codebase:/)]);
   });
 
+  test('open pull requests are merged or closed before any other work when the account can push', () => {
+    const scans: RepoScan[] = [{
+      repo: 'o/r',
+      info: info({ permissions: { admin: false, push: true, pull: true } }),
+      prs: [
+        pr(1, { author: { login: 'me' } }),
+        pr(2, { author: { login: 'me' }, headRefOid: 'def', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: 'needs work' }] }),
+        pr(3, { headRefOid: 'abc', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:abc -->' }], statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }),
+        pr(4, { headRefOid: 'red', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:red -->' }], statusCheckRollup: [{ conclusion: 'FAILURE', status: 'COMPLETED' }] }),
+      ],
+      issues: [issue(9)],
+    }];
+    const plan = planCandidates(scans, base());
+    expect(plan.map((c) => c.target)).toEqual(['squash:3:abc', 'close:4:red', 'pr:1', 'dispose:2:def']);
+    expect(plan.every((c) => c.kind === 'review-pr')).toBe(true);
+  });
+
+  test('a pull request waiting on CI does not block issues', () => {
+    const scans: RepoScan[] = [{
+      repo: 'o/r',
+      info: info({ permissions: { admin: false, push: true, pull: true } }),
+      prs: [pr(1, { headRefOid: 'abc', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:abc -->' }], statusCheckRollup: [{ status: 'IN_PROGRESS' }] })],
+      issues: [issue(2)],
+    }];
+    const plan = planCandidates(scans, { ...base(), only: ['review-pr', 'fix-issue'] });
+    expect(plan.map((c) => c.target)).toEqual(['issue:2']);
+  });
+
+  test('squashes a reviewed pull request when push is authorized and CI is green', () => {
+    const scans: RepoScan[] = [{ repo: 'o/r', info: info({ permissions: { admin: false, push: true, pull: true } }), prs: [
+      pr(1, { headRefOid: 'abc', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:abc -->' }], statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }),
+      pr(2, { headRefOid: 'def', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:def -->' }], statusCheckRollup: [{ conclusion: 'FAILURE', status: 'COMPLETED' }] }),
+      pr(3, { headRefOid: 'ghi', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:ghi -->' }], statusCheckRollup: [{ status: 'IN_PROGRESS' }] }),
+      pr(4),
+    ], issues: [] }];
+    const plan = planCandidates(scans, { ...base(), only: ['review-pr'] });
+    expect(plan.map((c) => c.target)).toEqual(['squash:1:abc', 'close:2:def', 'pr:4']);
+    expect(plan[0]).toMatchObject({ squash: true });
+  });
+
+  test('does not squash without push rights, a review marker, or merge authorization', () => {
+    const ready = pr(1, { headRefOid: 'abc', reviews: [{ author: { login: 'me' }, state: 'COMMENTED', body: '<!-- idlehand:squash:abc -->' }], statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] });
+    const scans = (over: Partial<RepoInfo> = {}): RepoScan[] => [{ repo: 'o/r', info: info(over), prs: [ready], issues: [] }];
+    expect(planCandidates(scans(), { ...base(), only: ['review-pr'] })).toEqual([]);
+    const b = base();
+    b.cfg.policy.merge = 'never';
+    expect(planCandidates(scans({ permissions: { admin: false, push: true, pull: true } }), { ...b, only: ['review-pr'] })).toEqual([]);
+    expect(planCandidates([{ repo: 'o/r', info: info({ permissions: { admin: false, push: true, pull: true } }), prs: [pr(1, { statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] })], issues: [] }], { ...base(), only: ['review-pr'] }).map((c) => c.target)).toEqual(['pr:1']);
+  });
+
   test('skips own, draft, already-reviewed and opted-out PRs', () => {
     const scans: RepoScan[] = [{ repo: 'o/r', info: info(), prs: [
       pr(1, { author: { login: 'me' } }),
@@ -28,6 +78,16 @@ describe('planCandidates', () => {
     ], issues: [] }];
     const plan = planCandidates(scans, { ...base(), only: ['review-pr'] });
     expect(plan.map((c) => c.target)).toEqual(['pr:5']);
+  });
+
+  test('a draft claim branch reserves its issue and is not reviewed', () => {
+    const scans: RepoScan[] = [{
+      repo: 'o/r',
+      info: info(),
+      prs: [pr(9, { isDraft: true, title: 'Working on an issue', headRefName: 'idlehand/issue-3' })],
+      issues: [issue(3), issue(4)],
+    }];
+    expect(planCandidates(scans, { ...base(), only: ['review-pr', 'fix-issue'] }).map((c) => c.target)).toEqual(['issue:4']);
   });
 
   test('skips issues that are assigned to others, labelled skip, referenced by a PR, or already attempted; boosts bug labels', () => {

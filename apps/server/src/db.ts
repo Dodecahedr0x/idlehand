@@ -328,7 +328,7 @@ export class Store {
     const cliConnected = !!this.db.query('SELECT 1 FROM cli_tokens WHERE user_id = ? AND last_used_at IS NOT NULL LIMIT 1').get(userId);
     const result = this.db.query<{ outcome: TaskOutcome }, [number]>(
       `SELECT outcome FROM run_reports WHERE user_id = ?
-       ORDER BY CASE WHEN outcome IN ('reviewed', 'merged', 'pr-opened', 'issues-filed') THEN 0 ELSE 1 END, id DESC LIMIT 1`,
+       ORDER BY CASE WHEN outcome IN ('reviewed', 'merged', 'closed', 'pr-opened', 'issues-filed') THEN 0 ELSE 1 END, id DESC LIMIT 1`,
     ).get(userId);
     return { cliConnected, contributionOutcome: result?.outcome ?? null };
   }

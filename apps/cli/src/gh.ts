@@ -29,7 +29,8 @@ export interface PrSummary {
   url: string;
   updatedAt: string;
   createdAt: string;
-  reviews: { author: { login: string }; state: string }[];
+  reviews: { author: { login: string } | null; state: string; body?: string }[];
+  statusCheckRollup?: { name?: string; context?: string; state?: string; conclusion?: string; status?: string }[];
   labels: { name: string }[];
   additions: number;
   deletions: number;
@@ -55,6 +56,15 @@ export async function currentLogin(): Promise<string> {
   return out.trim();
 }
 
+/** Author identity for commits made by the logged-in GitHub user. */
+export function githubCommitIdentity(user: { login: string; id: number; name: string | null }): { name: string; email: string } {
+  return { name: user.name?.trim() || user.login, email: `${user.id}+${user.login}@users.noreply.github.com` };
+}
+
+export function currentGithubUser(): Promise<{ login: string; id: number; name: string | null }> {
+  return ghJson(['api', 'user', '--jq', '{login:.login,id:.id,name:.name}']);
+}
+
 export interface RepoInfo {
   full_name: string;
   default_branch: string;
@@ -73,7 +83,7 @@ export function repoInfo(repo: string): Promise<RepoInfo> {
 export function listOpenPrs(repo: string, limit = 50): Promise<PrSummary[]> {
   return ghJson<PrSummary[]>([
     'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json',
-    'number,title,author,isDraft,headRefOid,headRefName,baseRefName,url,updatedAt,createdAt,reviews,labels,additions,deletions,isCrossRepository',
+    'number,title,author,isDraft,headRefOid,headRefName,baseRefName,url,updatedAt,createdAt,reviews,statusCheckRollup,labels,additions,deletions,isCrossRepository',
   ]);
 }
 
@@ -110,12 +120,13 @@ export interface PrDetail {
   files: { path: string; additions: number; deletions: number }[];
   commits: { messageHeadline: string }[];
   comments: { author: { login: string }; body: string }[];
+  reviews?: { author: { login: string } | null; state?: string; body?: string }[];
 }
 
 export function prDetail(repo: string, number: number): Promise<PrDetail> {
   return ghJson<PrDetail>([
     'pr', 'view', String(number), '--repo', repo, '--json',
-    'number,title,body,author,baseRefName,headRefName,headRefOid,headRepositoryOwner,headRepository,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files,commits,comments',
+    'number,title,body,author,baseRefName,headRefName,headRefOid,headRepositoryOwner,headRepository,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files,commits,comments,reviews',
   ]);
 }
 
@@ -142,8 +153,50 @@ export async function postPrReview(
   }
 }
 
+export type CheckRollup = { conclusion?: string | null; state?: string | null; status?: string | null };
+
+/** none: no checks configured. green: every check finished successfully. pending: still running. red: a check failed. */
+export function ciStatus(checks: CheckRollup[] | null | undefined): 'none' | 'green' | 'pending' | 'red' {
+  if (!checks?.length) return 'none';
+  const pending = checks.some((c) => {
+    const status = (c.status ?? '').toUpperCase();
+    const conclusion = (c.conclusion ?? c.state ?? '').toUpperCase();
+    return ['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED'].includes(status) || (!conclusion && status !== 'COMPLETED');
+  });
+  if (pending) return 'pending';
+  return checks.every((c) => /^(SUCCESS|NEUTRAL|SKIPPED)$/.test((c.conclusion ?? c.state ?? '').toUpperCase())) ? 'green' : 'red';
+}
+
+/** A pull request may merge when CI passed, or when the repo has no checks. */
+export function ciAllowsMerge(checks: CheckRollup[] | null | undefined): boolean {
+  const status = ciStatus(checks);
+  return status === 'green' || status === 'none';
+}
+
+export const squashMarker = (sha: string) => `<!-- idlehand:squash:${sha} -->`;
+
 export async function mergePr(repo: string, number: number, method: 'squash' | 'merge' | 'rebase'): Promise<void> {
   await gh(['pr', 'merge', String(number), '--repo', repo, `--${method}`]);
+}
+
+export async function closePr(repo: string, number: number, comment: string, opts?: { deleteBranch?: boolean }): Promise<void> {
+  const args = ['pr', 'close', String(number), '--repo', repo, '--comment', comment];
+  if (opts?.deleteBranch) args.push('--delete-branch');
+  await gh(args);
+}
+
+/** An open pull request whose head branch is `branch`, including drafts and forks. */
+export async function openPrForBranch(repo: string, branch: string): Promise<PrSummary | null> {
+  const prs = await listOpenPrs(repo);
+  return prs.find((pr) => pr.headRefName === branch) ?? null;
+}
+
+export async function editPr(repo: string, number: number, opts: { title: string; body: string }): Promise<void> {
+  await gh(['pr', 'edit', String(number), '--repo', repo, '--title', opts.title, '--body', opts.body]);
+}
+
+export async function markPrReady(repo: string, number: number): Promise<void> {
+  await gh(['pr', 'ready', String(number), '--repo', repo]);
 }
 
 export async function createIssue(repo: string, title: string, body: string, labels: string[] = []): Promise<string> {
@@ -165,6 +218,10 @@ export async function ensureLabel(repo: string, name: string, color: string, des
 export async function commentOnIssue(repo: string, number: number, body: string): Promise<string> {
   const out = await gh(['issue', 'comment', String(number), '--repo', repo, '--body', body]);
   return out.trim();
+}
+
+export async function closeIssue(repo: string, number: number, comment: string): Promise<void> {
+  await gh(['issue', 'close', String(number), '--repo', repo, '--reason', 'not planned', '--comment', comment]);
 }
 
 export async function createPr(repo: string, opts: { title: string; body: string; head: string; base: string; draft?: boolean }): Promise<string> {

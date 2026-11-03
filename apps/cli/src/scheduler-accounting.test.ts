@@ -7,7 +7,7 @@ test('scheduler retains charged usage on publishing failure and stops on unknown
     import { mock } from 'bun:test';
     import assert from 'node:assert/strict';
     mock.module(${path('./workspace.ts')}, () => ({ pruneWorktrees: async () => {} }));
-    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected task'); } }));
+    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected task'); }, closeFailedPr: async () => { throw new Error('unexpected task'); }, squashReadyPr: async () => { throw new Error('unexpected task'); } }));
     mock.module(${path('./tasks/reviewCodebase.ts')}, () => ({ reviewCodebase: async () => { throw new Error('unexpected task'); } }));
     mock.module(${path('./tasks/fixIssue.ts')}, () => ({ fixIssue: async (ctx) => {
       await ctx.provider.run({});

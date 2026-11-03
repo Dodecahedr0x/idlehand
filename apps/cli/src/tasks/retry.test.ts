@@ -8,13 +8,18 @@ test('codebase infrastructure and publishing failures remain eligible for bounde
     let phase = 'infrastructure';
     mock.module(${path('../providers/index.ts')}, () => ({providerBudgetError: () => null}));
     mock.module(${path('./fixIssue.ts')}, () => ({fixIssue: async () => {throw new Error('unexpected task');}}));
-    mock.module(${path('./reviewPr.ts')}, () => ({reviewPr: async () => {throw new Error('unexpected task');}}));
+    mock.module(${path('./reviewPr.ts')}, () => ({
+      reviewPr: async () => {throw new Error('unexpected task');},
+      closeFailedPr: async () => {throw new Error('unexpected task');},
+      squashReadyPr: async () => {throw new Error('unexpected task');},
+    }));
     mock.module(${path('../workspace.ts')}, () => ({
       ensureBase: async () => '/unused', headSha: async () => 'abcdef',
       makeWorktree: async () => ({path: '/unused', remove: async () => {}}),
+      attachWorktree: (_base, path) => ({path, remove: async () => {}}),
       pruneWorktrees: async () => {},
     }));
-    mock.module(${path('../shell.ts')}, () => ({exec: async () => ({code: 0, stdout: '', stderr: ''})}));
+    mock.module(${path('../shell.ts')}, () => ({exec: async () => ({code: 0, stdout: '', stderr: ''}), isStopped: () => false}));
     mock.module(${path('../verify.ts')}, () => ({
       commandLooksSafe: () => null, similarTitle: () => false,
       verify: async () => phase === 'infrastructure'
@@ -24,6 +29,7 @@ test('codebase infrastructure and publishing failures remain eligible for bounde
     mock.module(${path('../gh.ts')}, () => ({
       issueBodies: async () => [], ensureLabel: async () => true,
       currentLogin: async () => 'me', listOpenIssues: async () => [], listOpenPrs: async () => [], repoInfo: async () => ({}),
+      ciAllowsMerge: () => false, ciStatus: () => 'none', squashMarker: (sha) => \`<!-- idlehand:squash:\${sha} -->\`,
       createIssue: async () => {if (phase === 'publish') throw new Error('temporary GitHub failure'); return 'https://github.com/o/r/issues/1';},
     }));
     const { reviewCodebase } = await import(${path('./reviewCodebase.ts')});

@@ -219,9 +219,9 @@ Examples:
   idlehand run --provider claude --budget 10%   Requires subscription.monthlyUsd
   idlehand run --json --budget 45m > run.jsonl
 
-Ctrl+C or q in the dashboard stops after the running tasks finish.
+The dashboard lists what is running on each repo. ↑↓ selects a task, enter shows only its logs, esc returns. Ctrl+C or q stops the run. Tasks already in progress resume on the next idlehand run.
 Claude dollar thresholds can overshoot during in-flight calls. Codex and the Cursor CLI have no dollar cap.
-A run keeps scanning until the budget is spent. Up to 4 tasks run at once (--jobs), each in its own worktree, including several tasks on the same repo. A dollar budget can overshoot by the tasks already running. It ignores author and does not wait between tasks. --no-continuous makes one pass and then stops. --once stops after one task.
+A run keeps scanning until the budget is spent. Up to 4 tasks run at once (--jobs), each in its own worktree, including several tasks on the same repo. Free slots scan for more work immediately. With nothing new to start, the run scans again every 15 seconds. A dollar budget can overshoot by the tasks already running. It ignores author and does not wait between tasks. --no-continuous makes one pass and then stops. --once stops after one task.
 A run signs in to the GitHub CLI if needed. Dry runs do not need an agent CLI or change saved task records.
 Press Ctrl+C to stop when the queue is idle. An idle dollar budget does not end the run.`)
   .action(async (opts: { budget?: string; provider?: string; repo?: string[]; only?: TaskKind[]; once?: boolean; jobs?: number; continuous?: boolean; dryRun?: boolean; report: boolean }) => {

@@ -2,7 +2,7 @@ import type { TaskKind, TaskOutcome } from '@idlehand/shared';
 import type { Config } from '../config.ts';
 import type { IssueSummary, PrSummary, RepoInfo } from '../gh.ts';
 import type { AgentProvider } from '../providers/index.ts';
-import type { State } from '../state.ts';
+import type { State, TaskCheckpoint } from '../state.ts';
 
 export interface TaskContext {
   repo: string;
@@ -15,10 +15,14 @@ export interface TaskContext {
   log: (line: string) => void;
   /** Estimated-spend stopping threshold for the provider (null = none). */
   maxBudgetUsd: number | null;
+  /** Set when this task is continuing a workspace left by a stopped run. */
+  resume?: TaskCheckpoint;
+  /** Record the workspace so a later run can continue it. */
+  saveWorkspace?: (workspace: { worktree: string; branch?: string }) => void;
 }
 
 export type Candidate =
-  | { kind: 'review-pr'; repo: string; target: string; label: string; pr: PrSummary }
+  | { kind: 'review-pr'; repo: string; target: string; label: string; pr: PrSummary; squash?: boolean; close?: boolean }
   | { kind: 'fix-issue'; repo: string; target: string; label: string; issue: IssueSummary }
   | { kind: 'review-codebase'; repo: string; target: string; label: string };
 

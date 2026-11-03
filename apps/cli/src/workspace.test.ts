@@ -1,9 +1,63 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { exec } from './shell.ts';
-import { diffStat, stageChanges } from './workspace.ts';
+import { githubCommitIdentity } from './gh.ts';
+import { commitAll, commitArgs, diffStat, stageChanges, stageForced } from './workspace.ts';
+
+test('a fix commit is authored as the logged-in GitHub user', () => {
+  const author = githubCommitIdentity({ login: 'octocat', id: 7, name: 'The Octocat' });
+  expect(author).toEqual({ name: 'The Octocat', email: '7+octocat@users.noreply.github.com' });
+  expect(githubCommitIdentity({ login: 'octocat', id: 7, name: '  ' }).name).toBe('octocat');
+  const args = commitArgs(author, { sign: false, key: null }, 'Fix #1');
+  expect(args).toContain('user.name=The Octocat');
+  expect(args).toContain('user.email=7+octocat@users.noreply.github.com');
+  expect(args.join(' ')).not.toContain('idlehand');
+  expect(commitArgs(author, { sign: true, key: 'ABC' }, 'Fix #1')).toContain('user.signingkey=ABC');
+});
+
+test('commitAll records the GitHub author on the commit', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'idlehand-author-'));
+  const git = async (...args: string[]) => {
+    const result = await exec(['git', ...args], { cwd: dir });
+    expect(result.code).toBe(0);
+    return result.stdout.trim();
+  };
+  try {
+    await git('init', '--quiet');
+    await git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(dir, 'fix.ts'), 'export const fixed = true;\n');
+    const author = githubCommitIdentity({ login: 'octocat', id: 7, name: null });
+    await commitAll(dir, 'Fix #1: example', author);
+    expect(await git('log', '-1', '--format=%an <%ae>')).toBe('octocat <7+octocat@users.noreply.github.com>');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a claim file is committed even when its directory is ignored', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'idlehand-claim-'));
+  const git = async (...args: string[]) => {
+    const result = await exec(['git', ...args], { cwd: dir });
+    expect(result.code).toBe(0);
+    return result.stdout.trim();
+  };
+  try {
+    await git('init', '--quiet');
+    await git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(dir, '.gitignore'), '.github/\n');
+    await git('add', '-A');
+    await git('-c', 'user.name=idlehand', '-c', 'user.email=idlehand@users.noreply.github.com', 'commit', '--quiet', '-m', 'init');
+    mkdirSync(join(dir, '.github'), { recursive: true });
+    writeFileSync(join(dir, '.github/idlehand-claim'), '#7\n');
+    await stageForced(dir, '.github/idlehand-claim');
+    await commitAll(dir, 'Reserve #7', { name: 'octocat', email: '7+octocat@users.noreply.github.com' });
+    expect(await git('ls-tree', '-r', '--name-only', 'HEAD')).toContain('.github/idlehand-claim');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('preparing a fix preserves new source and tests while ignoring build artifacts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'idlehand-publish-'));

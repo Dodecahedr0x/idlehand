@@ -77,7 +77,7 @@ test('Claude marks missing or invalid accounting unknown rather than treating a 
 
 test('Claude keeps a reported charge when the process later times out', async () => {
   const f = fixture(`console.log(${JSON.stringify(claudeResult({ total_cost_usd: 0.005 }))}); await Bun.sleep(10000);`);
-  const result = await new ClaudeProvider(f.cfg.claude).run({ ...f.request, timeoutMs: 300 });
+  const result = await new ClaudeProvider(f.cfg.claude).run({ ...f.request, timeoutMs: 1500 });
   expect(result.costUsd).toBe(0.005);
   expect(result.error).toContain('timed out');
 });
@@ -156,6 +156,32 @@ test('uncapped Codex prices trailing completed-turn usage without requiring a fi
   expect(result.costEstimated).toBe(true);
   expect(result.costUnknown).toBe(false);
   expect(result.output).toEqual({ ok: true });
+});
+
+test('providers resume the saved session instead of repeating the original prompt', async () => {
+  const claude = fixture(`process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-9' }) + '\n' + claudeResult({ session_id: 'sess-9' }))});`);
+  let claudeSession = '';
+  await new ClaudeProvider(claude.cfg.claude).run({ ...claude.request, resumeSessionId: 'sess-9', onSession: (id) => { claudeSession = id; } });
+  const claudeArgs = JSON.parse(readFileSync(claude.calls, 'utf8')) as string[];
+  expect(claudeArgs[claudeArgs.indexOf('--resume') + 1]).toBe('sess-9');
+  expect(claudeArgs[1]).toContain('interrupted');
+  expect(claudeArgs).not.toContain('fixture');
+  expect(claudeSession).toBe('sess-9');
+
+  const codex = fixture('process.stdout.write(' + JSON.stringify(JSON.stringify({ type: 'thread.started', thread_id: 'thr-1' }) + '\n') + ');');
+  await new CodexProvider(codex.cfg.codex).run({ ...codex.request, maxBudgetUsd: null, resumeSessionId: 'thr-1' });
+  const codexArgs = JSON.parse(readFileSync(codex.calls, 'utf8')) as string[];
+  expect(codexArgs.slice(0, 2)).toEqual(['exec', 'resume']);
+  expect(codexArgs.at(-2)).toBe('thr-1');
+  expect(codexArgs.at(-1)).toContain('interrupted');
+
+  const cursor = fixture(`process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'chat-1' }) + '\n' + cursorResult({ session_id: 'chat-1' }))});`);
+  let cursorSession = '';
+  await new CursorProvider(cursor.cfg.cursor).run({ ...cursor.request, maxBudgetUsd: null, resumeSessionId: 'chat-1', onSession: (id) => { cursorSession = id; } });
+  const cursorArgs = JSON.parse(readFileSync(cursor.calls, 'utf8')) as string[];
+  expect(cursorArgs[cursorArgs.indexOf('--resume') + 1]).toBe('chat-1');
+  expect(cursorArgs.at(-1)).toContain('interrupted');
+  expect(cursorSession).toBe('chat-1');
 });
 
 test('uncapped Codex preserves completed-turn usage when later turns fail and marks final cost unknown', async () => {

@@ -12,8 +12,8 @@ idlehand run --budget remaining  # keep going until the provider says stop
 
 ## What a run does, in priority order
 
-1. **Review open pull requests.** Checks out the PR, reads the full diff and surrounding code, runs the test suite, posts a review. If the GitHub account has push rights, the PR is approved and marked safe-to-merge by the agent, the runner's own re-run of the tests is green, and GitHub reports the PR mergeable with green checks, it merges. Set `policy.merge never` to only review.
-2. **Work open issues.** Reproduces the issue first, fixes it on a branch, adds a test, then opens a PR. If the account cannot push, it pushes to a fork.
+1. **Finish open pull requests.** This happens before issues or a codebase review. The runner reviews a pull request, then merges it with `policy.mergeMethod` (`squash` by default) when the account has push rights, the review is safe, tests pass, and CI is green or absent. A pull request the account opened that is not safe to merge is closed. CI that is still running waits, and a failed check closes it. Set `policy.merge never` to only review.
+2. **Work open issues.** Opens a draft pull request first, so other agents skip the issue, then reproduces it, fixes it on that branch, and marks the pull request ready after the fix is verified. If the attempt does not produce a verified fix, the draft is closed. If the account cannot push, it pushes to a fork.
 3. **Review the codebase** for real, reproducible defects and files them as issues. A run keeps scanning until the budget is spent. `--no-continuous` makes one pass, and then waits 72 hours before reviewing that codebase again.
 
 Dollar and percent budgets use Claude Code's native spending threshold, passing the exact remaining amount without rounding it up. In-flight calls can overshoot; leave headroom. Codex and the Cursor CLI cannot enforce a dollar threshold, so Idlehand refuses dollar and percent budgets before starting them. Choose an explicit task, time, or `remaining` budget to use either one without a dollar cap.
@@ -23,8 +23,9 @@ Dollar and percent budgets use Claude Code's native spending threshold, passing 
 The agent is never trusted on its word. Every claim comes with a shell command, and the runner re-runs that command itself before anything reaches GitHub:
 
 - A **codebase finding** becomes an issue only if its reproduction command fails the way the agent said it does, on a clean checkout. The issue body contains the exact command, the expected signal, and the output the runner observed.
-- An **issue fix** becomes a PR only if the reproduction command fails on the default branch, passes on the fix branch, and the test command passes on the fix branch. The PR summary contains a Reproduction section with before and after output, plus the test output.
+- An **issue fix** is published into its pull request only if the reproduction command fails on the default branch, passes on the fix branch, and the test command passes on the fix branch. Until then the pull request is a draft that only reserves the issue. The ready pull request summary contains a Reproduction section with before and after output, plus the test output. If the bug cannot be confirmed on the default branch, or the attempt concludes it is not a bug or cannot be reproduced, the issue is closed with that explanation when GitHub allows it. Otherwise the same note is left as a comment. A fix that fails its own checks does not close the issue.
 - A **PR review** can only approve if the runner re-ran the test command and it passed. Otherwise the verdict is downgraded to a comment.
+- An **agent failure** must be considered as a possible issue. If the provider is still willing to continue, the runner asks whether that failure is a separate reproducible defect. It files an issue only when the reproduction fails on a clean checkout of the default branch. A provider limit or a missing spend report is not a defect, so it does not become an issue.
 
 Findings that do not survive are logged as `unverified` and discarded. Commands that would touch GitHub, use sudo, or delete outside the checkout are rejected before they run.
 
@@ -86,7 +87,7 @@ Run `idlehand` for a quick start, or `idlehand <command> --help` for examples. B
 
 Global flags: `--plain` for line output, `--json` for one JSON value per line. Without terminal input and output the CLI picks `--plain` automatically. In JSON mode, errors and warnings are JSON records on stderr, leaving stdout available for command results and run events. Exit codes are `0` for success, `1` for a command or setup error, and `2` when one or more run tasks failed. `doctor` uses the same exit status in human and JSON modes; an unavailable server or unselected provider is optional.
 
-Use `--dry-run` to preview the queue using your GitHub login. It does not require Claude Code, Codex, or the Cursor CLI, spend credits, change saved task outcomes, or prune checkouts. During a run, press **Ctrl+C** (or **q** in the dashboard) to stop after the running tasks finish; no further tasks start. The dashboard shows live elapsed time and marks estimated spending with `≈`.
+Use `--dry-run` to preview the queue using your GitHub login. It does not require Claude Code, Codex, or the Cursor CLI, spend credits, change saved task outcomes, or prune checkouts. During a run, the dashboard lists what is running on each repo. **↑↓** selects a task, **enter** shows only that task's logs, and **esc** returns to the overview. Press **Ctrl+C** or **q** to stop. Tasks already in progress resume in the same workspace on the next `idlehand run`. The dashboard shows live elapsed time and marks estimated spending with `≈`.
 
 Useful settings (`idlehand config keys` lists them all):
 
@@ -100,7 +101,7 @@ A run keeps scanning until the budget is spent. It retries a failure immediately
 | `policy.merge` | `when-authorized` | `never` to review without merging. |
 | `policy.issueLabels` | any | Only attempt issues with one of these labels, e.g. `bug,help wanted`. |
 | `policy.maxIssuesPerReview` | 3 | Cap on issues filed per codebase review. |
-| `policy.commentOnIssues` | false | Comment when an issue cannot be reproduced or is not a bug. |
+| `policy.commentOnIssues` | false | Comment when an issue needs more information. Unverified issues are closed either way, when GitHub allows it. |
 | `claude.permissionMode` | `acceptEdits` | Agents run inside a throwaway checkout; `bypassPermissions` is available if you accept the risk. |
 | `codex.pricing.*` | GPT-5 list | Codex reports tokens, not dollars, so its spend is an estimate. |
 | `cursor.bin` | `agent` | Cursor CLI binary. The current installer exposes the command as `agent`. |
@@ -110,7 +111,7 @@ A run keeps scanning until the budget is spent. It retries a failure immediately
 
 Claude Code reports its client-side dollar estimate in `total_cost_usd`; [its native budget flag](https://code.claude.com/docs/en/cli-reference) stops at a spending threshold and can overshoot during in-flight calls. Codex and the [Cursor CLI](https://cursor.com/docs/cli/reference/output-format) report tokens only; Idlehand estimates dollars with the configured price table. Estimates are marked with `≈` and can differ from a bill. Codex and Cursor dollar and percent budgets are rejected because neither interface has a dollar stopping threshold. The Cursor provider appends the task JSON schema to the prompt, since that CLI has no schema flag. Missing final accounting stops the run instead of allowing more untracked spending; any reported partial usage is retained, and zero without accounting does not mean the task was free.
 
-Neither CLI exposes a subscription's live quota, so `10%` means ten percent of the monthly value you declare. Task and time budgets are checked between tasks, so a current task can finish after a time budget expires. `remaining` means no cap of our own: the run ends when the provider refuses to continue. A normal run keeps scanning after the queue is empty, so an idle dollar budget does not end the process; stop it with Ctrl+C. `--no-continuous` stops when the current queue is done.
+Neither CLI exposes a subscription's live quota, so `10%` means ten percent of the monthly value you declare. Task and time budgets are checked between tasks, so a current task can finish after a time budget expires. `remaining` means no cap of our own: the run ends when the provider refuses to continue. A normal run keeps scanning after the queue is empty, so an idle dollar budget does not end the process; stop it with Ctrl+C. Free job slots scan again immediately. When that scan finds nothing new, the next scan waits 15 seconds. `--no-continuous` stops when the current queue is done.
 
 ## Opting out
 

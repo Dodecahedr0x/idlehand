@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { formatCost } from '@idlehand/shared';
 import type { Config } from '../config.ts';
 import { exec, tail, which } from '../shell.ts';
-import { EXHAUSTED_RE, extractJson, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
+import { EXHAUSTED_RE, agentPrompt, extractJson, noteSession, providerBudgetError, refusedRun, type AgentProvider, type AgentRunRequest, type AgentRunResult } from './types.ts';
 
 /**
  * OpenAI Codex CLI in non-interactive mode: `codex exec --json`.
@@ -35,9 +35,13 @@ export class CodexProvider implements AgentProvider {
     const schemaPath = join(tmp, 'schema.json');
     const lastPath = join(tmp, 'last.txt');
     writeFileSync(schemaPath, JSON.stringify(req.schema));
-    const args = ['exec', '--json', '-C', req.cwd, '-s', this.cfg.sandbox, '--skip-git-repo-check', '--output-schema', schemaPath, '-o', lastPath, '--color', 'never'];
+    const prompt = agentPrompt(req);
+    const args = req.resumeSessionId
+      ? ['exec', 'resume', '--json', '--skip-git-repo-check', '--output-schema', schemaPath, '-o', lastPath]
+      : ['exec', '--json', '-C', req.cwd, '-s', this.cfg.sandbox, '--skip-git-repo-check', '--output-schema', schemaPath, '-o', lastPath, '--color', 'never'];
     if (this.cfg.model) args.push('-m', this.cfg.model);
-    args.push(req.prompt);
+    if (req.resumeSessionId) args.push(req.resumeSessionId);
+    args.push(prompt);
 
     let usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
     let sawUsage = false;
@@ -50,6 +54,7 @@ export class CodexProvider implements AgentProvider {
       let ev: any;
       try { ev = JSON.parse(line); } catch { return; }
       if (!ev || typeof ev !== 'object' || Array.isArray(ev)) return;
+      noteSession(req, ev.thread_id ?? ev.session_id);
       const type = String(ev.type ?? '');
       if (type === 'turn.completed' && ev.usage) {
         const counts = [ev.usage.input_tokens, ev.usage.cached_input_tokens ?? 0, ev.usage.output_tokens];
@@ -84,7 +89,7 @@ export class CodexProvider implements AgentProvider {
 
     let r;
     try {
-      r = await exec([this.cfg.bin, ...args], { cwd: req.cwd, timeoutMs: req.timeoutMs, onOutput, env: { NO_COLOR: '1' } });
+      r = await exec([this.cfg.bin, ...args], { cwd: req.cwd, timeoutMs: req.timeoutMs, onOutput, signal: req.signal, env: { NO_COLOR: '1' } });
     } catch (e) {
       rmSync(tmp, { recursive: true, force: true });
       throw e;

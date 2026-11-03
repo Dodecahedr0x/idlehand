@@ -1,5 +1,16 @@
 /** Small subprocess helpers built on Bun.spawn. */
 
+export class Stopped extends Error {
+  constructor() {
+    super('stopped');
+    this.name = 'Stopped';
+  }
+}
+
+export function isStopped(error: unknown): boolean {
+  return error instanceof Stopped || (error instanceof Error && error.name === 'Stopped');
+}
+
 export interface ExecResult {
   code: number;
   stdout: string;
@@ -23,9 +34,12 @@ export interface ExecOptions {
   maxBytes?: number;
   /** Hand the terminal to an interactive command such as `gh auth login`. */
   stdio?: 'pipe' | 'inherit';
+  /** Abort the child. The returned promise rejects with `Stopped`. */
+  signal?: AbortSignal;
 }
 
 export async function exec(cmd: string[], opts: ExecOptions = {}): Promise<ExecResult> {
+  if (opts.signal?.aborted) throw new Stopped();
   const started = Date.now();
   const inherit = opts.stdio === 'inherit';
   const proc = Bun.spawn(cmd, {
@@ -64,12 +78,25 @@ export async function exec(cmd: string[], opts: ExecOptions = {}): Promise<ExecR
     }
     return buf;
   };
+  let killLater: ReturnType<typeof setTimeout> | undefined;
+  const onAbort = () => {
+    try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+    killLater = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* already exited */ } }, 2000);
+    killLater.unref?.();
+  };
+  opts.signal?.addEventListener('abort', onAbort, { once: true });
   let stdout = '';
   let stderr = '';
-  if (!inherit) [stdout, stderr] = await Promise.all([collect(proc.stdout ?? null, 'stdout'), collect(proc.stderr ?? null, 'stderr')]);
-  const code = await proc.exited;
-  if (timer) clearTimeout(timer);
-  return { code, stdout, stderr, timedOut, durationMs: Date.now() - started };
+  try {
+    if (!inherit) [stdout, stderr] = await Promise.all([collect(proc.stdout ?? null, 'stdout'), collect(proc.stderr ?? null, 'stderr')]);
+    const code = await proc.exited;
+    if (opts.signal?.aborted) throw new Stopped();
+    return { code, stdout, stderr, timedOut, durationMs: Date.now() - started };
+  } finally {
+    opts.signal?.removeEventListener('abort', onAbort);
+    if (killLater) clearTimeout(killLater);
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Run a shell command string through `sh -c` (for user/agent supplied commands). */

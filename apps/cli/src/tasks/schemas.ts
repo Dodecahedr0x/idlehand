@@ -51,7 +51,7 @@ export const FIX_ISSUE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    status: { type: 'string', enum: ['fixed', 'cannot_reproduce', 'not_a_bug', 'needs_info', 'too_large'] },
+    status: { type: 'string', enum: ['fixed', 'cannot_reproduce', 'not_a_bug', 'needs_info', 'too_large'], description: 'fixed only for a small correction of a defect you reproduced. Use not_a_bug for a feature, documentation, packaging, an installer, deployment, or a workflow.' },
     summary: { type: 'string', description: 'One paragraph for the PR description: what was wrong and what changed.' },
     changes: { type: 'string', description: 'Markdown bullet list of the changes made, by file.' },
     reproduction,

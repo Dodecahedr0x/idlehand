@@ -1,36 +1,34 @@
-import { ensureBase, headSha, makeWorktree } from '../workspace.ts';
-import { createIssue, ensureLabel, issueBodies } from '../gh.ts';
-import { commandLooksSafe, similarTitle, verify } from '../verify.ts';
+import { existsSync } from 'node:fs';
+import { attachWorktree, ensureBase, headSha, makeWorktree } from '../workspace.ts';
+import { isStopped } from '../shell.ts';
+import { issueBodies } from '../gh.ts';
 import { CODEBASE_REVIEW_SCHEMA } from './schemas.ts';
 import { codebaseReviewPrompt } from './prompts.ts';
-import { FOOTER, MARKER, fmtCmd, fmtOut, type TaskContext, type TaskResult } from './common.ts';
-
-interface Finding {
-  title: string;
-  severity: 'low' | 'medium' | 'high';
-  body: string;
-  reproduction: { setup: string[]; command: string };
-  expect: { exitCode: 'zero' | 'nonzero'; outputIncludes: string | null; outputExcludes: string | null };
-  observed: string;
-}
+import { considerFailureIssue, fileVerifiedFindings, type IssueFinding } from './failureIssue.ts';
+import { type TaskContext, type TaskResult } from './common.ts';
 
 export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
   const started = Date.now();
   const branch = ctx.info.default_branch;
   const base = await ensureBase(ctx.repo, branch, ctx.log);
   const sha = await headSha(base, `origin/${branch}`);
-  const wt = await makeWorktree(ctx.repo, base, `origin/${branch}`, 'review');
+  const wt = ctx.resume?.worktree && existsSync(ctx.resume.worktree)
+    ? attachWorktree(base, ctx.resume.worktree)
+    : await makeWorktree(ctx.repo, base, `origin/${branch}`, 'review');
+  ctx.saveWorkspace?.({ worktree: wt.path });
+  let paused = false;
   const kind = 'review-codebase' as const;
-  const fail = (summary: string, costUsd = 0, costEstimated = false, exhausted = false, outcome: TaskResult['outcome'] = 'failed'): TaskResult =>
-    ({ kind, outcome, url: null, summary, costUsd, costEstimated, durationMs: Date.now() - started, exhausted });
   try {
     const existing = await issueBodies(ctx.repo).catch(() => [] as { number: number; title: string; body: string }[]);
     const prompt = codebaseReviewPrompt(ctx.repo, branch, existing.map((i) => i.title), ctx.cfg.policy.maxIssuesPerReview);
     ctx.log(`agent: hunting for reproducible bugs on ${ctx.repo}@${sha.slice(0, 7)}`);
     const run = await ctx.provider.run({ cwd: wt.path, prompt, schema: CODEBASE_REVIEW_SCHEMA, maxBudgetUsd: ctx.maxBudgetUsd, timeoutMs: ctx.cfg.policy.taskTimeoutMin * 60_000, onLog: ctx.log });
-    if (run.error || !run.output) return fail(run.error ?? 'no output', run.costUsd, run.costEstimated, run.exhausted);
+    if (run.error || !run.output) {
+      const judged = await considerFailureIssue(ctx, { base, cwd: wt.path, branch, task: `a codebase review of ${ctx.repo}`, run });
+      return { kind, outcome: 'failed', url: judged.url, summary: judged.summary, costUsd: judged.costUsd, costEstimated: judged.costEstimated, durationMs: Date.now() - started, exhausted: judged.exhausted };
+    }
 
-    const out = run.output as { findings: Finding[]; notes: string };
+    const out = run.output as { findings: IssueFinding[]; notes: string };
     const findings = Array.isArray(out.findings) ? out.findings.slice(0, ctx.cfg.policy.maxIssuesPerReview) : [];
     if (findings.length === 0) {
       ctx.state.markCodebaseReview(ctx.repo, sha);
@@ -39,44 +37,11 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
 
     // Verify each finding on a CLEAN worktree so scratch state from the agent cannot fake a failure.
     const clean = await makeWorktree(ctx.repo, base, `origin/${branch}`, 'verify');
-    const filed: string[] = [];
-    const rejected: string[] = [];
+    let filed: string[] = [];
+    let rejected: string[] = [];
     let infrastructureFailed = false;
     try {
-      const timeout = ctx.cfg.policy.commandTimeoutSec * 1000;
-      let labelOk: boolean | null = null;
-      for (const f of findings) {
-        const unsafe = commandLooksSafe(f.reproduction.command) ?? f.reproduction.setup.map(commandLooksSafe).find(Boolean) ?? null;
-        if (unsafe) { rejected.push(`${f.title}: ${unsafe}`); ctx.log(`✗ ${f.title} — ${unsafe}`); continue; }
-        if (existing.some((i) => similarTitle(i.title, f.title))) { rejected.push(`${f.title}: similar open issue exists`); ctx.log(`✗ ${f.title} — similar issue already open`); continue; }
-        ctx.log(`verifying: ${f.title}`);
-        const v = await verify(f.reproduction, f.expect, clean.path, timeout, ctx.log);
-        if (!v.ok) {
-          infrastructureFailed ||= !!v.infrastructureError;
-          rejected.push(`${f.title}: ${v.reason}`);
-          ctx.log(`✗ ${v.infrastructureError ? 'verification unavailable' : 'unverified'} — ${v.reason}`);
-          continue;
-        }
-        ctx.log(`✓ reproduced (exit ${v.exitCode})`);
-        if (labelOk == null) labelOk = await ensureLabel(ctx.repo, 'idlehand', '6f42c1', 'Filed by an Idlehand node after re-verifying the reproduction');
-        const body = [
-          MARKER('issue', sha.slice(0, 7)),
-          f.body.trim(),
-          '',
-          '## Reproduction',
-          `On \`${branch}\` @ ${sha.slice(0, 7)}, from the repo root:`,
-          ...(f.reproduction.setup.length ? ['Setup:', fmtCmd(f.reproduction.setup.join('\n'))] : []),
-          fmtCmd(f.reproduction.command),
-          `Expected: exit ${f.expect.exitCode === 'zero' ? '0' : '≠ 0'}${f.expect.outputIncludes ? ` and output containing \`${f.expect.outputIncludes}\`` : ''}.`,
-          'Observed (re-run by the runner on a clean checkout):',
-          fmtOut(v.outputTail),
-          `Severity: **${f.severity}**`,
-          FOOTER('Filed'),
-        ].join('\n');
-        const url = await createIssue(ctx.repo, f.title, body, labelOk ? ['idlehand'] : []);
-        filed.push(url);
-        ctx.log(`filed ${url}`);
-      }
+      ({ filed, rejected, infrastructureFailed } = await fileVerifiedFindings(ctx, findings, existing, clean.path, branch, sha));
     } finally {
       await clean.remove();
     }
@@ -92,7 +57,10 @@ export async function reviewCodebase(ctx: TaskContext): Promise<TaskResult> {
       durationMs: Date.now() - started,
       exhausted: run.exhausted,
     };
+  } catch (e) {
+    paused = isStopped(e);
+    throw e;
   } finally {
-    await wt.remove();
+    if (!paused) await wt.remove();
   }
 }

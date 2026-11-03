@@ -19,6 +19,7 @@ test('codebase review rejects missing fixtures instead of copying agent symlinks
     mock.module(${path('../workspace.ts')}, () => ({
       ensureBase: async () => root, headSha: async () => 'abcdef',
       makeWorktree: async () => ({path: worktrees++ === 0 ? agent : clean, remove: async () => {}}),
+      attachWorktree: (_base, path) => ({path, remove: async () => {}}),
     }));
     mock.module(${path('../gh.ts')}, () => ({
       issueBodies: async () => [], ensureLabel: async () => true,

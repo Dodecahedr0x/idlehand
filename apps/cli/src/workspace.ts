@@ -94,6 +94,15 @@ export async function makeWorktree(repo: string, base: string, ref: string, slug
   else args.push('--detach');
   args.push(path, ref);
   await git(args, base);
+  return worktreeHandle(base, path, branch);
+}
+
+/** Reattach a worktree left behind when a run was stopped. */
+export function attachWorktree(base: string, path: string, branch?: string): Worktree {
+  return worktreeHandle(base, path, branch);
+}
+
+function worktreeHandle(base: string, path: string, branch?: string): Worktree {
   return {
     path,
     remove: async () => {
@@ -125,18 +134,50 @@ export async function stageChanges(dir: string): Promise<void> {
   await git(['add', '-A'], dir);
 }
 
-export async function commitAll(dir: string, message: string): Promise<string> {
+/** Stage a reservation file even when the repo ignores its directory. */
+export async function stageForced(dir: string, path: string): Promise<void> {
+  await git(['add', '-f', '--', path], dir);
+}
+
+export function commitArgs(author: { name: string; email: string }, signing: { sign: boolean; key: string | null }, message: string): string[] {
+  const args = ['-c', `user.name=${author.name}`, '-c', `user.email=${author.email}`];
+  if (signing.sign && signing.key) args.push('-c', `user.signingkey=${signing.key}`);
+  args.push('commit', '--quiet', '-m', message);
+  return args;
+}
+
+async function gitConfig(dir: string, key: string): Promise<string | null> {
+  const result = await exec(['git', 'config', '--get', key], { cwd: dir, timeoutMs: 10_000 });
+  const value = result.stdout.trim();
+  return result.code === 0 && value ? value : null;
+}
+
+/** The user's signing key, so a GitHub noreply author can still be signed. */
+async function defaultSigningKey(): Promise<string | null> {
+  const result = await exec(['gpg', '--list-secret-keys', '--with-colons'], { timeoutMs: 10_000 });
+  if (result.code !== 0) return null;
+  return result.stdout.split('\n').find((line) => line.startsWith('sec:'))?.split(':')[4] || null;
+}
+
+export async function commitAll(dir: string, message: string, author: { name: string; email: string }): Promise<string> {
   await stageChanges(dir);
-  await git(['-c', 'user.name=idlehand', '-c', 'user.email=idlehand@users.noreply.github.com', 'commit', '--quiet', '-m', message], dir);
+  const sign = ['true', 'yes', 'on'].includes((await gitConfig(dir, 'commit.gpgsign')) ?? '');
+  const key = sign ? (await gitConfig(dir, 'user.signingkey')) ?? await defaultSigningKey() : null;
+  await git(commitArgs(author, { sign, key }, message), dir);
   return headSha(dir);
 }
 
 /** Push `branch` from `dir` to `https://github.com/<target>.git` using the gh token for this one push. */
-export async function pushBranch(dir: string, target: string, branch: string, token: string): Promise<void> {
+export async function pushBranch(dir: string, target: string, branch: string, token: string, opts?: { force?: boolean; delete?: boolean }): Promise<void> {
   const url = `https://x-access-token:${token}@github.com/${target}.git`;
+  const refspec = opts?.delete ? `:refs/heads/${branch}` : `HEAD:refs/heads/${branch}`;
+  const args = ['git', 'push', '--quiet'];
+  // A claim must not overwrite another agent's branch. Later updates of a branch we own still lease it.
+  if (!opts?.delete && opts?.force !== false) args.push('--force-with-lease');
+  args.push(url, refspec);
   await withGitLock(gitLockKey(dir), async () => {
-    const r = await exec(['git', 'push', '--force-with-lease', '--quiet', url, `HEAD:refs/heads/${branch}`], { cwd: dir, timeoutMs: 300_000, env: { GIT_TERMINAL_PROMPT: '0' } });
-    if (r.code !== 0) throw new GitError(`git push failed: ${r.stderr.replace(token, '***').trim()}`);
+    const r = await exec(['git', ...args], { cwd: dir, timeoutMs: 300_000, env: { GIT_TERMINAL_PROMPT: '0' } });
+    if (r.code !== 0) throw new GitError(`git push failed: ${r.stderr.replaceAll(token, '***').trim()}`);
   });
 }
 

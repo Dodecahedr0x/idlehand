@@ -7,7 +7,7 @@ import { repoRowToCard, userToMe, type RepoInput, type UserRow } from '../db.ts'
 const DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
 const KINDS = new Set(['review-pr', 'fix-issue', 'review-codebase']);
 const PROVIDER_NAMES = new Set<string>(PROVIDERS);
-const OUTCOMES = new Set(['reviewed', 'merged', 'pr-opened', 'issues-filed', 'nothing-found', 'unverified', 'failed']);
+const OUTCOMES = new Set(['reviewed', 'merged', 'closed', 'pr-opened', 'issues-filed', 'nothing-found', 'unverified', 'failed']);
 
 /** Cookie-session guard with a cheap CSRF check for mutations. */
 async function requireSession(c: Context<AppEnv>, next: Next) {
