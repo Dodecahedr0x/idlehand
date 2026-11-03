@@ -5,6 +5,7 @@ import { reposForUser } from './api.ts';
 import { Landing } from '../pages/Landing.tsx';
 import { Popular } from '../pages/Popular.tsx';
 import { Dashboard } from '../pages/Dashboard.tsx';
+import { Data } from '../pages/Data.tsx';
 import { Install } from '../pages/Install.tsx';
 import { SignIn } from '../pages/Message.tsx';
 import { safeNext } from '../session.ts';
@@ -33,6 +34,11 @@ export function pageRoutes() {
   r.get('/install', (c) => {
     const user = c.get('user');
     return c.html(<Install me={user ? userToMe(user) : null} />);
+  });
+
+  r.get('/data', (c) => {
+    const user = c.get('user');
+    return c.html(<Data me={user ? userToMe(user) : null} />);
   });
 
   r.get('/dashboard', async (c) => {

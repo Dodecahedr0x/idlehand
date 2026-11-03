@@ -28,7 +28,7 @@ bun test apps/server
 
 ## Endpoints
 
-- Pages: `/`, `/login`, `/dashboard`, `/install`, `/popular`, `/cli/approve?code=…`, `/logout`
+- Pages: `/`, `/login`, `/dashboard`, `/install`, `/data`, `/popular`, `/cli/approve?code=…`, `/logout`
 - Auth: `/auth/github`, `/auth/github/callback`, `/auth/dev` (dev only)
 - Browser API (cookie + `X-Requested-With: fetch` on mutations): `/api/me`, `/api/me/repos?page=`, `/api/selections` (GET/POST/DELETE `/:owner/:name`), `/api/repos/popular`, `/api/repos/search?q=`
 - CLI device login: `POST /api/cli/codes`, `GET /api/cli/codes/:deviceCode`

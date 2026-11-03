@@ -26,7 +26,7 @@ export const SignIn: FC<{ next: string; me: Me | null }> = ({ next, me }) => (
       <h1>Welcome to Idlehand.</h1>
       <p class="lead">Sign in to choose the repositories you care about and see what your local runner contributes.</p>
       <a class="btn primary" href={`/auth/github?next=${encodeURIComponent(next)}`}>Continue with GitHub <span aria-hidden="true">↗</span></a>
-      <p class="fine-print">GitHub handles sign-in. The web app saves your repository choices; the CLI runs on your machine using your local GitHub account.</p>
+      <p class="fine-print">GitHub handles sign-in. The web app saves your repository choices; the CLI runs on your machine using your local GitHub account. <a href="/data">See what Idlehand stores</a>.</p>
       {next.startsWith('/cli/approve') ? <div class="notice">After sign-in, you’ll return to the code confirmation screen. Signing in alone does not connect your CLI.</div> : null}
       <a class="text-link" href="/popular">Explore repositories first →</a>
     </section>
