@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Provider } from '@idlehand/shared';
 import { CONFIG_PATH } from './paths.ts';
@@ -119,8 +119,11 @@ export function loadConfig(path = CONFIG_PATH): Config {
 }
 
 export function saveConfig(cfg: Config, path = CONFIG_PATH): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(cfg, null, 2) + '\n');
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  writeFileSync(path, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
 /** Set a dotted key, coercing booleans/numbers/JSON arrays. */
