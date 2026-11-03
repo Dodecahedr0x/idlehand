@@ -44,7 +44,7 @@ export function authRoutes() {
   // Dev-only login without OAuth so the UI can be exercised locally.
   r.get('/auth/dev', async (c) => {
     const { config, store, github } = c.get('deps');
-    if (!config.devLogin) return c.text('Not found', 404);
+    if (!config.devLogin || config.baseUrl.startsWith('https://')) return c.text('Not found', 404);
     const login = (c.req.query('login') ?? 'octocat').replace(/[^A-Za-z0-9-]/g, '');
     if (!login) return c.text('bad login', 400);
     // Stable fake id derived from the login so repeated dev logins hit the same row.

@@ -98,6 +98,11 @@ describe('auth basics', () => {
     expect(res.headers.get('location')).toBe('/dashboard');
     expect(res.headers.get('set-cookie')).toContain(SESSION_COOKIE);
   });
+  test('dev login is refused on an https BASE_URL even when enabled', async () => {
+    const prodApp = createApp({ config: { ...config, baseUrl: 'https://idlehand.example', devLogin: true }, store, github: new FakeGitHub() });
+    const res = await prodApp.request('http://localhost/auth/dev?login=octocat', { redirect: 'manual' });
+    expect(res.status).toBe(404);
+  });
   test('dev login preloads the configured repository', async () => {
     const devApp = createApp({ config: { ...config, devLogin: true, devRepos: ['acme/rocket'] }, store, github: new FakeGitHub() });
     const res = await devApp.request('http://localhost/auth/dev?login=octocat', { redirect: 'manual' });
