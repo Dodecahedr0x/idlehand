@@ -252,6 +252,7 @@ export class Store {
     const rows = this.db
       .query<RepoRow & { n: number }, [number]>(
         `SELECT r.*, COUNT(s.user_id) AS n FROM repos r JOIN selections s ON s.repo_id = r.id
+         WHERE r.private = 0
          GROUP BY r.id ORDER BY n DESC, r.stars DESC, r.full_name ASC LIMIT ?`,
       )
       .all(limit);
