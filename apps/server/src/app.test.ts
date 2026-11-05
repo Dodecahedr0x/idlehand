@@ -213,6 +213,46 @@ describe('selections and popular', () => {
     expect(found.map((r) => r.fullName)).toEqual(['other/lib']);
     expect(calls).toEqual(['tok-alice', null]);
   });
+
+  test('a rejected GitHub token can still include a public repository', async () => {
+    const github = new FakeGitHub();
+    const calls: Array<string | null | undefined> = [];
+    github.getRepo = async (owner, name, token) => {
+      calls.push(token);
+      if (token) throw new GitHubError('GitHub /repos/other/lib -> 403', 403);
+      return REPOS.find((r) => r.owner === owner && r.name === name) ?? null;
+    };
+    const local = createApp({ config, store, github });
+    const alice = await cookieFor(1);
+    const res = await local.request('http://localhost/api/selections', {
+      method: 'POST',
+      headers: { cookie: alice, 'content-type': 'application/json', 'x-requested-with': 'fetch' },
+      body: JSON.stringify({ owner: 'other', name: 'lib' }),
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ fullName: 'other/lib', selected: true });
+    expect(calls).toEqual(['tok-alice', null]);
+  });
+
+  test('a token that cannot see a public repository still includes it', async () => {
+    const github = new FakeGitHub();
+    const calls: Array<string | null | undefined> = [];
+    github.getRepo = async (owner, name, token) => {
+      calls.push(token);
+      if (token) return null;
+      return REPOS.find((r) => r.owner === owner && r.name === name) ?? null;
+    };
+    const local = createApp({ config, store, github });
+    const alice = await cookieFor(1);
+    const res = await local.request('http://localhost/api/selections', {
+      method: 'POST',
+      headers: { cookie: alice, 'content-type': 'application/json', 'x-requested-with': 'fetch' },
+      body: JSON.stringify({ owner: 'acme', name: 'rocket' }),
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ fullName: 'acme/rocket', selected: true });
+    expect(calls).toEqual(['tok-alice', null]);
+  });
 });
 
 describe('CLI device flow + bearer API', () => {
@@ -440,6 +480,8 @@ describe('first contribution setup', () => {
     expect(dashboard).toContain("idlehand run --provider cursor --budget &#39;1 task&#39; --once");
     expect(dashboard).toContain('no dollar cap');
     expect(dashboard).toContain('CLI not connected yet');
+    expect(dashboard).toContain('<details class="setup panel" id="setup-title">');
+    expect(dashboard).not.toContain('<details class="setup panel" id="setup-title" open');
   });
 
   test('connection requires actual token use and never leaks another account or stale approval', async () => {

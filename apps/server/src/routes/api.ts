@@ -75,7 +75,14 @@ export function apiRoutes() {
     const owner = body?.owner?.trim();
     const name = body?.name?.trim();
     if (!owner || !name || !/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(name)) return c.json({ error: 'owner and name required' }, 400);
-    const input = await github.getRepo(owner, name, user.access_token);
+    // A read:user token is rejected for repository reads. The public repo is still includeable.
+    let input: RepoInput | null = null;
+    try {
+      input = await github.getRepo(owner, name, user.access_token);
+    } catch (e) {
+      if (!user.access_token || !tokenRejected(e)) throw e;
+    }
+    if (!input && user.access_token) input = await github.getRepo(owner, name, null);
     if (!input) return c.json({ error: `repo ${owner}/${name} not found on GitHub` }, 404);
     const row = store.upsertRepo(input);
     store.addSelection(user.id, row.id);
