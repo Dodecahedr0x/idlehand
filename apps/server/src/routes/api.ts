@@ -3,6 +3,7 @@ import type { Context, Next } from 'hono';
 import { PROVIDERS, type RunReport, type DeviceCodeStart, type DeviceCodePoll } from '@idlehand/shared';
 import type { AppEnv } from '../app.ts';
 import { repoRowToCard, userToMe, type RepoInput, type UserRow } from '../db.ts';
+import { GitHubError } from '../github.ts';
 
 const DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
 const KINDS = new Set(['review-pr', 'fix-issue', 'review-codebase']);
@@ -30,10 +31,20 @@ async function requireBearer(c: Context<AppEnv>, next: Next) {
   await next();
 }
 
-/** Repos for a user: via their OAuth token, or public repos for dev-login users. */
+function tokenRejected(e: unknown): e is GitHubError {
+  return e instanceof GitHubError;
+}
+
+/** Repos for a user. A read:user token cannot list private repos, so fall back to the public list. */
 export async function reposForUser(c: Context<AppEnv>, user: UserRow, page: number): Promise<RepoInput[]> {
   const { github } = c.get('deps');
-  return user.access_token ? github.listUserRepos(user.access_token, page) : github.listPublicReposFor(user.login, page);
+  if (!user.access_token) return github.listPublicReposFor(user.login, page);
+  try {
+    return await github.listUserRepos(user.access_token, page);
+  } catch (e) {
+    if (!tokenRejected(e)) throw e;
+    return github.listPublicReposFor(user.login, page);
+  }
 }
 
 export function apiRoutes() {
@@ -91,7 +102,13 @@ export function apiRoutes() {
     const q = (c.req.query('q') ?? '').trim();
     if (!q) return c.json([]);
     const user = c.get('user');
-    const inputs = await github.searchRepos(q, user?.access_token);
+    let inputs: RepoInput[];
+    try {
+      inputs = await github.searchRepos(q, user?.access_token);
+    } catch (e) {
+      if (!user?.access_token || !tokenRejected(e)) throw e;
+      inputs = await github.searchRepos(q, null);
+    }
     const cards = inputs.map((i) => repoRowToCard(store.upsertRepo(i)));
     return c.json(store.decorateCards(cards, user?.id ?? null));
   });

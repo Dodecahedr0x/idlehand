@@ -191,13 +191,14 @@ const JS = `
   }
   function key(b) { return (b.dataset.owner + '/' + b.dataset.name).toLowerCase(); }
   function fmtRepo(r) {
+    if (!r || typeof r.fullName !== 'string' || typeof r.htmlUrl !== 'string' || typeof r.owner !== 'string' || typeof r.name !== 'string') return null;
     var card = document.createElement('article'); card.className = 'card';
     card.dataset.repo = r.fullName.toLowerCase();
     card.innerHTML = '<div class="row"><a class="name" target="_blank" rel="noopener"></a><button type="button" class="btn small toggle"></button></div><div class="desc"></div><div class="meta"><span class="lang"></span><span class="stars"></span><span class="count"></span><span class="pill privacy" hidden>Private</span></div>';
     var a = card.querySelector('.name'); a.textContent = r.fullName; a.href = r.htmlUrl;
     card.querySelector('.desc').textContent = r.description || 'No description provided.';
     card.querySelector('.lang').textContent = r.language || '';
-    card.querySelector('.stars').textContent = '☆ ' + r.stars.toLocaleString();
+    card.querySelector('.stars').textContent = '☆ ' + Number(r.stars || 0).toLocaleString();
     setCount(card, r.selectedBy || 0);
     card.querySelector('.privacy').hidden = !r.private;
     var b = card.querySelector('.toggle'); b.dataset.owner = r.owner; b.dataset.name = r.name;
@@ -271,9 +272,13 @@ const JS = `
       if (!res.ok) throw new Error('search');
       var list = await res.json(); if (!Array.isArray(list)) throw new Error('search');
       if (controller.signal.aborted) return;
-      status.textContent = list.length ? list.length + ' repositories found for “' + q + '”.' : 'No repositories found for “' + q + '”. Try another name or owner.';
       var grid = document.createElement('div'); grid.className = 'grid';
-      list.forEach(function (r) { grid.appendChild(fmtRepo(r)); }); out.replaceChildren(grid);
+      list.forEach(function (r) {
+        try { var card = fmtRepo(r); if (card) grid.appendChild(card); } catch (err) {}
+      });
+      if (!grid.childElementCount && list.length) throw new Error('search');
+      status.textContent = grid.childElementCount ? grid.childElementCount + ' repositories found for “' + q + '”.' : 'No repositories found for “' + q + '”. Try another name or owner.';
+      out.replaceChildren(grid);
     } catch (err) {
       if (controller.signal.aborted) return;
       status.textContent = 'GitHub search is unavailable. Check your connection or try again in a moment. Your saved repositories are unchanged.';

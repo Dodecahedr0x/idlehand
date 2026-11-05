@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach } from 'bun:test';
 import type { DeviceCodePoll, DeviceCodeStart, PopularRepo, RunReport, SelectedRepo, StoredRunReport } from '@idlehand/shared';
 import { createApp } from './app.ts';
 import { Store, type RepoInput } from './db.ts';
-import type { GitHubClient, GitHubUser } from './github.ts';
+import { GitHubError, type GitHubClient, type GitHubUser } from './github.ts';
 import type { ServerConfig } from './config.ts';
 import { safeNext, signValue, SESSION_COOKIE, STATE_COOKIE } from './session.ts';
 
@@ -187,6 +187,31 @@ describe('selections and popular', () => {
     expect(found[0]).toMatchObject({ fullName: 'acme/anvil', selected: true, selectedBy: 1 });
     const anon = (await (await req('/api/repos/search?q=anvil')).json()) as SelectedRepo[];
     expect(anon[0]!.selected).toBeUndefined();
+  });
+
+  test('a rejected GitHub token still lists public repos and public search results', async () => {
+    const github = new FakeGitHub();
+    const calls: Array<string | null | undefined> = [];
+    github.listUserRepos = async () => {
+      throw new GitHubError('GitHub /user/repos -> 403', 403);
+    };
+    github.listPublicReposFor = async () => [REPOS[2]!];
+    github.searchRepos = async (q, token) => {
+      calls.push(token);
+      if (token) throw new GitHubError('GitHub /search/repositories -> 422', 422);
+      return REPOS.filter((r) => `${r.owner}/${r.name}`.includes(q));
+    };
+    const local = createApp({ config, store, github });
+    const alice = await cookieFor(1);
+    const headers = { cookie: alice };
+    const mine = (await (await local.request('http://localhost/api/me/repos', { headers })).json()) as SelectedRepo[];
+    expect(mine.map((r) => r.fullName)).toEqual(['other/lib']);
+    const html = await (await local.request('http://localhost/dashboard', { headers })).text();
+    expect(html).toContain('other/lib');
+    expect(html).not.toContain('GitHub repositories are unavailable');
+    const found = (await (await local.request('http://localhost/api/repos/search?q=lib', { headers })).json()) as SelectedRepo[];
+    expect(found.map((r) => r.fullName)).toEqual(['other/lib']);
+    expect(calls).toEqual(['tok-alice', null]);
   });
 });
 

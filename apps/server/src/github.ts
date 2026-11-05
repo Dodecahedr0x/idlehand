@@ -26,20 +26,39 @@ export class GitHubError extends Error {
 }
 
 interface ApiRepo {
-  name: string;
-  owner: { login: string };
+  name?: string;
+  owner?: { login?: string };
   description: string | null;
-  html_url: string;
+  html_url?: string;
   private: boolean;
   default_branch: string | null;
   language: string | null;
   stargazers_count: number;
 }
 
-export function apiRepoToInput(r: ApiRepo): RepoInput {
+const LOGIN = /^[\w.-]+$/;
+
+function pathPart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** GitHub sometimes puts a display name in `owner.login`. The public URL is the name we can import. */
+export function apiRepoToInput(r: ApiRepo): RepoInput | null {
+  let owner = r.owner?.login ?? '';
+  let name = r.name ?? '';
+  const fromUrl = /^https:\/\/github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i.exec(r.html_url ?? '');
+  if (fromUrl && (!LOGIN.test(owner) || !LOGIN.test(name))) {
+    owner = pathPart(fromUrl[1]!);
+    name = pathPart(fromUrl[2]!);
+  }
+  if (!LOGIN.test(owner) || !LOGIN.test(name) || !r.html_url) return null;
   return {
-    owner: r.owner.login,
-    name: r.name,
+    owner,
+    name,
     description: r.description,
     htmlUrl: r.html_url,
     private: !!r.private,
@@ -47,6 +66,20 @@ export function apiRepoToInput(r: ApiRepo): RepoInput {
     language: r.language ?? null,
     stars: r.stargazers_count ?? 0,
   };
+}
+
+function inputsFrom(rows: ApiRepo[]): RepoInput[] {
+  return rows.flatMap((row) => {
+    const input = apiRepoToInput(row);
+    return input ? [input] : [];
+  });
+}
+
+/** A read:user token cannot search private repos. Asking for them makes GitHub reject the query. */
+export function publicSearchQuery(q: string): string {
+  const trimmed = q.trim();
+  if (/\bis:(public|private|internal)\b/i.test(trimmed)) return trimmed;
+  return `${trimmed} is:public`;
 }
 
 export class RealGitHubClient implements GitHubClient {
@@ -87,13 +120,18 @@ export class RealGitHubClient implements GitHubClient {
   }
 
   async listUserRepos(token: string, page: number): Promise<RepoInput[]> {
-    const rows = await this.api<ApiRepo[]>(`/user/repos?per_page=50&sort=updated&page=${page}`, token);
-    return rows.map(apiRepoToInput);
+    // visibility=public and affiliation=owner: default visibility=all returns 403 for a
+    // read:user token when the account has private repos or an organization blocks the app.
+    const rows = await this.api<ApiRepo[]>(
+      `/user/repos?per_page=50&sort=updated&page=${page}&visibility=public&affiliation=owner`,
+      token,
+    );
+    return inputsFrom(rows);
   }
 
   async listPublicReposFor(login: string, page: number): Promise<RepoInput[]> {
     const rows = await this.api<ApiRepo[]>(`/users/${encodeURIComponent(login)}/repos?per_page=50&sort=updated&page=${page}`);
-    return rows.map(apiRepoToInput);
+    return inputsFrom(rows);
   }
 
   async getRepo(owner: string, name: string, token?: string | null): Promise<RepoInput | null> {
@@ -107,7 +145,10 @@ export class RealGitHubClient implements GitHubClient {
   }
 
   async searchRepos(q: string, token?: string | null): Promise<RepoInput[]> {
-    const data = await this.api<{ items: ApiRepo[] }>(`/search/repositories?q=${encodeURIComponent(q)}&per_page=20`, token);
-    return data.items.map(apiRepoToInput);
+    const data = await this.api<{ items: ApiRepo[] }>(
+      `/search/repositories?q=${encodeURIComponent(publicSearchQuery(q))}&per_page=20`,
+      token,
+    );
+    return inputsFrom(data.items ?? []);
   }
 }
