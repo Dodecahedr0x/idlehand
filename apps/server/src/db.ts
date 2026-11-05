@@ -297,8 +297,7 @@ export class Store {
   }
 
   approveDeviceCode(deviceCode: string, userId: number, label: string): string {
-    const token = randomHex(32);
-    this.db.query('INSERT INTO cli_tokens (token, user_id, label) VALUES (?, ?, ?)').run(token, userId, label);
+    const token = this.createCliToken(userId, label);
     this.db
       .query('UPDATE device_codes SET status = ?, user_id = ?, token = ? WHERE device_code = ?')
       .run('approved', userId, token, deviceCode);
@@ -315,6 +314,12 @@ export class Store {
   }
 
   /* ---- cli tokens ---- */
+
+  createCliToken(userId: number, label: string): string {
+    const token = randomHex(32);
+    this.db.query('INSERT INTO cli_tokens (token, user_id, label) VALUES (?, ?, ?)').run(token, userId, label);
+    return token;
+  }
 
   userForCliToken(token: string): UserRow | null {
     const row = this.db.query<{ user_id: number }, [string]>('SELECT user_id FROM cli_tokens WHERE token = ?').get(token);

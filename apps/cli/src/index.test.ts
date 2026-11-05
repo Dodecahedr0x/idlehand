@@ -25,6 +25,7 @@ case "$1 $2" in
     if [ "$GH_AUTH" = missing ]; then echo "You are not logged into any GitHub hosts." >&2; exit 1; fi
     exit 0 ;;
   'auth login'|'auth refresh') touch "$GH_LOGGED_IN"; exit 0 ;;
+  'auth token') printf '%s\\n' "\${GH_TOKEN:-gho_test}" ;;
   'api user') printf 'tester\\n' ;;
   'api repos/'*)
     if [ "$SLOW_SCAN" = 1 ]; then sleep 0.3; fi
@@ -148,6 +149,37 @@ test('doctor returns the same failure status in human and JSON output; optional 
   cfg.budget = '0m';
   saveConfig(cfg, join(f.home, 'config.json'));
   expect((await f.run('doctor', '--json')).code).toBe(1);
+});
+
+test('login uses the signed-in GitHub CLI and does not ask for a browser', async () => {
+  const seen: { path: string; token: string }[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      const body = req.method === 'POST' ? await req.json().catch(() => null) as { token?: string } | null : null;
+      seen.push({ path, token: body?.token ?? '' });
+      if (req.method === 'POST' && path === '/api/cli/github' && body?.token === 'gho_test') {
+        return Response.json({ token: 'ab'.repeat(32), login: 'tester' }, { status: 201 });
+      }
+      return Response.json({ error: 'nope' }, { status: 404 });
+    },
+  });
+  try {
+    const f = fixture(config());
+    const r = await f.run('login', '--server', `http://127.0.0.1:${server.port}`, '--json');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).not.toContain('gho_test');
+    expect(r.stdout).not.toContain('verification');
+    expect(JSON.parse(r.stdout)).toEqual({ type: 'logged-in', login: 'tester', server: `http://127.0.0.1:${server.port}` });
+    expect(seen).toEqual([{ path: '/api/cli/github', token: 'gho_test' }]);
+    expect(JSON.parse(readFileSync(join(f.home, 'config.json'), 'utf8')).server).toMatchObject({ token: 'ab'.repeat(32), login: 'tester' });
+    expect(readFileSync(f.calls, 'utf8')).toContain('auth token');
+    expect(readFileSync(f.calls, 'utf8')).not.toContain('open ');
+  } finally {
+    server.stop(true);
+  }
 });
 
 test('a run signs the GitHub CLI in instead of asking for it first', async () => {

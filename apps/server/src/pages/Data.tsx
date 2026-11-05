@@ -13,7 +13,7 @@ export const Data: FC<{ me: Me | null }> = ({ me }) => (
       <h2 id="stored-title">What is stored, and why</h2>
       <p>After you sign in, Idlehand stores your GitHub user id, login, name, and avatar URL so the dashboard can show who you are.</p>
       <p>The web app stores the OAuth access token GitHub issues at sign-in so it can list repositories on your account. The default scope is <code>read:user</code>.</p>
-      <p>When you approve a device login, Idlehand stores CLI tokens so your local runner can read your repository selections and post run-report summaries.</p>
+      <p>Idlehand stores CLI tokens so your local runner can read your repository selections and post run-report summaries. Signing in through the GitHub CLI checks your GitHub token and does not store that token. A browser approval stores a CLI token the same way.</p>
       <p>Your repository selections are stored so the next run knows what to work on, and so the public shortlist can show how many people included a project.</p>
       <p>Each finished task can post run-report summaries (repository, kind, provider, outcome, optional URL, cost, and duration) so the dashboard can show recent work.</p>
       <h2>How long it lasts</h2>

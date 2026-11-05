@@ -372,6 +372,42 @@ describe('CLI device flow + bearer API', () => {
   test('unknown code', async () => {
     expect((await req('/api/cli/codes/deadbeef')).status).toBe(404);
   });
+
+  test('a GitHub CLI token logs in without a browser approval and is not stored', async () => {
+    const github = new FakeGitHub();
+    github.users['gho_carol'] = { id: 3, login: 'carol', name: 'Carol', avatarUrl: null };
+    github.users['gho_alice_broad'] = { id: 1, login: 'alice', name: 'Alice', avatarUrl: null };
+    const local = new Store(':memory:');
+    local.upsertUser({ id: 1, login: 'alice', name: 'Alice', avatarUrl: null, accessToken: 'tok-alice' });
+    const localApp = createApp({ config, store: local, github });
+    const call = (token: unknown) => localApp.request('http://localhost/api/cli/github', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+
+    const created = await call('gho_carol');
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as { token: string; login: string };
+    expect(body).toMatchObject({ login: 'carol' });
+    expect(body.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(body)).not.toContain('gho_carol');
+    expect(local.getUser(3)?.access_token).toBeNull();
+    const me = await localApp.request('http://localhost/api/cli/me', { headers: { authorization: `Bearer ${body.token}` } });
+    expect(await me.json()).toMatchObject({ id: 3, login: 'carol' });
+
+    const kept = await call('gho_alice_broad');
+    expect(kept.status).toBe(201);
+    expect(local.getUser(1)?.access_token).toBe('tok-alice');
+
+    github.getUser = async () => { throw new GitHubError('GitHub /user -> 401', 401); };
+    const rejected = await call('gho_rejected');
+    expect(rejected.status).toBe(401);
+    expect(await rejected.json()).toEqual({ error: 'GitHub rejected the token' });
+
+    expect((await call('')).status).toBe(400);
+    expect((await call('not a token')).status).toBe(400);
+  });
 });
 
 describe('pages', () => {
@@ -439,6 +475,7 @@ describe('pages', () => {
     expect(html).toContain('avatar URL');
     expect(html).toContain('OAuth access token');
     expect(html).toContain('CLI tokens');
+    expect(html).toContain('does not store that token');
     expect(html).toContain('repository selections');
     expect(html).toContain('run-report summaries');
     expect(html).toContain('30 days');
@@ -475,6 +512,8 @@ describe('first contribution setup', () => {
     const dashboard = await (await req('/dashboard', { cookie: await cookieFor(1) })).text();
     expect(dashboard).toContain('href="/install"');
     expect(dashboard).toContain('idlehand login --server http://localhost:8787');
+    expect(dashboard).toContain('GitHub CLI already signed in');
+    expect(dashboard).not.toContain('browser code');
     expect(dashboard).toContain('idlehand doctor');
     expect(dashboard).toContain("idlehand run --provider codex --budget &#39;1 task&#39; --once");
     expect(dashboard).toContain("idlehand run --provider cursor --budget &#39;1 task&#39; --once");

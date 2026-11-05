@@ -162,6 +162,25 @@ export function apiRoutes() {
     return c.json(out);
   });
 
+  /* ---- CLI login from an existing GitHub CLI session (no browser) ---- */
+
+  r.post('/api/cli/github', async (c) => {
+    const { store, github } = c.get('deps');
+    const body = (await c.req.json().catch(() => null)) as { token?: unknown } | null;
+    const token = typeof body?.token === 'string' ? body.token.trim() : '';
+    if (!token || token.length > 2048 || /\s/.test(token)) return c.json({ error: 'GitHub token required' }, 400);
+    let ghUser;
+    try {
+      ghUser = await github.getUser(token);
+    } catch (e) {
+      if (e instanceof GitHubError && (e.status === 401 || e.status === 403)) return c.json({ error: 'GitHub rejected the token' }, 401);
+      return c.json({ error: 'could not verify the GitHub token' }, 502);
+    }
+    // The GitHub CLI token can push code. Check it, then drop it. Keep a narrower OAuth token if one is already stored.
+    const user = store.upsertUser({ id: ghUser.id, login: ghUser.login, name: ghUser.name, avatarUrl: ghUser.avatarUrl, accessToken: null });
+    return c.json({ token: store.createCliToken(user.id, 'cli'), login: user.login }, 201);
+  });
+
   /* ---- CLI (bearer) ---- */
 
   r.get('/api/cli/me', requireBearer, (c) => c.json(userToMe(c.get('user')!)));

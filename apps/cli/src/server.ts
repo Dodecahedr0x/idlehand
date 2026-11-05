@@ -1,5 +1,5 @@
 /** Client for the Idlehand web service (apps/server). */
-import type { DeviceCodePoll, DeviceCodeStart, Me, RunReport, SelectedRepo, StoredRunReport } from '@idlehand/shared';
+import type { CliGitHubLogin, DeviceCodePoll, DeviceCodeStart, Me, RunReport, SelectedRepo, StoredRunReport } from '@idlehand/shared';
 
 export class ServerError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -28,6 +28,7 @@ export class ServerClient {
   }
 
   health() { return this.req<{ ok: boolean }>('GET', '/healthz', undefined, false); }
+  loginWithGitHub(githubToken: string) { return this.req<CliGitHubLogin>('POST', '/api/cli/github', { token: githubToken }, false); }
   startDeviceCode() { return this.req<DeviceCodeStart>('POST', '/api/cli/codes', {}, false); }
   pollDeviceCode(deviceCode: string) { return this.req<DeviceCodePoll>('GET', `/api/cli/codes/${deviceCode}`, undefined, false); }
   me() { return this.req<Me>('GET', '/api/cli/me'); }

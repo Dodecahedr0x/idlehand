@@ -58,35 +58,28 @@ const taskKinds = (value: string): TaskKind[] => {
 
 program
   .command('login')
-  .description('Connect this machine to your Idlehand account (device-style flow in the browser)')
+  .description('Connect this machine with the GitHub account already signed in to gh')
   .option('--server <url>', 'Idlehand server URL', undefined)
-  .option('--no-open', 'do not try to open the browser')
-  .action(async (opts: { server?: string; open: boolean }) => {
+  .option('--browser', 'approve in a browser instead of using the signed-in GitHub CLI')
+  .option('--no-open', 'with --browser, do not try to open the browser')
+  .action(async (opts: { server?: string; browser?: boolean; open: boolean }) => {
     try { await ensureGhAuth(); } catch (e) { return fail((e as Error).message); }
     const cfg = loadConfig();
     if (opts.server) cfg.server.url = opts.server;
     const client = new ServerClient(cfg.server.url);
-    let start;
-    try { start = await client.startDeviceCode(); } catch (e) { return fail(`${(e as Error).message}. Is the server running at ${cfg.server.url}? Use --server <url>.`); }
-    if (wantsJson()) out({ type: 'device-code', ...start });
-    else {
-      console.log(`\nOpen this page and approve the code  ${start.userCode}\n\n  ${start.verificationUrl}\n`);
-      if (opts.open) await openBrowser(start.verificationUrl);
-      console.log('waiting for approval…');
+    if (opts.browser) return loginInBrowser(client, cfg, opts.open);
+    const github = await exec(['gh', 'auth', 'token'], { timeoutMs: 20_000 });
+    const githubToken = github.stdout.trim();
+    if (github.code !== 0 || !githubToken) return fail('could not read the GitHub CLI token. Run this command again.');
+    let session;
+    try { session = await client.loginWithGitHub(githubToken); } catch (e) {
+      const err = e as ServerError;
+      if (err.status === 401) return fail(err.message);
+      if (err.status === 404) return fail('this server does not accept a GitHub CLI login yet. Update the server, or run idlehand login --browser.');
+      return fail(`${err.message}. Is the server running at ${cfg.server.url}? Use --server <url>.`);
     }
-    const deadline = Date.parse(start.expiresAt);
-    while (Date.now() < deadline) {
-      await Bun.sleep(Math.max(2, start.interval) * 1000);
-      let poll;
-      try { poll = await client.pollDeviceCode(start.deviceCode); } catch (e) { if ((e as ServerError).status === 404) return fail('code was consumed or expired; run login again'); continue; }
-      if (poll.status === 'approved') {
-        cfg.server.token = poll.token; cfg.server.login = poll.login; saveConfig(cfg);
-        return out(wantsJson() ? { type: 'logged-in', login: poll.login, server: cfg.server.url } : `✓ logged in as ${poll.login} (saved to ${CONFIG_PATH})`);
-      }
-      if (poll.status === 'denied') return fail('approval was denied in the browser');
-      if (poll.status === 'expired') break;
-    }
-    fail('the code expired before it was approved; run login again');
+    cfg.server.token = session.token; cfg.server.login = session.login; saveConfig(cfg);
+    return out(wantsJson() ? { type: 'logged-in', login: session.login, server: cfg.server.url } : `✓ logged in as ${session.login} (saved to ${CONFIG_PATH})`);
   });
 
 program.command('logout').description('Forget the server token on this machine').action(() => {
@@ -351,6 +344,30 @@ async function resolveRepos(cfg: ReturnType<typeof loadConfig>, explicit: string
   }
   for (const r of cfg.repos) if (!seen.has(r)) { seen.add(r); list.push({ repo: r, source: 'local' }); }
   return list;
+}
+
+async function loginInBrowser(client: ServerClient, cfg: ReturnType<typeof loadConfig>, open: boolean) {
+  let start;
+  try { start = await client.startDeviceCode(); } catch (e) { return fail(`${(e as Error).message}. Is the server running at ${cfg.server.url}? Use --server <url>.`); }
+  if (wantsJson()) out({ type: 'device-code', ...start });
+  else {
+    console.log(`\nOpen this page and approve the code  ${start.userCode}\n\n  ${start.verificationUrl}\n`);
+    if (open) await openBrowser(start.verificationUrl);
+    console.log('waiting for approval…');
+  }
+  const deadline = Date.parse(start.expiresAt);
+  while (Date.now() < deadline) {
+    await Bun.sleep(Math.max(2, start.interval) * 1000);
+    let poll;
+    try { poll = await client.pollDeviceCode(start.deviceCode); } catch (e) { if ((e as ServerError).status === 404) return fail('code was consumed or expired; run login again'); continue; }
+    if (poll.status === 'approved') {
+      cfg.server.token = poll.token; cfg.server.login = poll.login; saveConfig(cfg);
+      return out(wantsJson() ? { type: 'logged-in', login: poll.login, server: cfg.server.url } : `✓ logged in as ${poll.login} (saved to ${CONFIG_PATH})`);
+    }
+    if (poll.status === 'denied') return fail('approval was denied in the browser');
+    if (poll.status === 'expired') break;
+  }
+  fail('the code expired before it was approved; run login again');
 }
 
 async function openBrowser(url: string) {

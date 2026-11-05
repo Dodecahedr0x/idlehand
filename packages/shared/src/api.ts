@@ -48,6 +48,12 @@ export interface DeviceCodeStart {
   interval: number;
 }
 
+/** CLI session issued after a GitHub token check. The GitHub token itself is not returned. */
+export interface CliGitHubLogin {
+  token: string;
+  login: string;
+}
+
 export type DeviceCodePoll =
   | { status: 'pending' }
   | { status: 'approved'; token: string; login: string }
