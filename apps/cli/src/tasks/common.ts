@@ -22,7 +22,7 @@ export interface TaskContext {
 }
 
 export type Candidate =
-  | { kind: 'review-pr'; repo: string; target: string; label: string; pr: PrSummary; squash?: boolean; close?: boolean }
+  | { kind: 'review-pr'; repo: string; target: string; label: string; pr: PrSummary; squash?: boolean; close?: boolean; address?: boolean }
   | { kind: 'fix-issue'; repo: string; target: string; label: string; issue: IssueSummary }
   | { kind: 'review-codebase'; repo: string; target: string; label: string };
 

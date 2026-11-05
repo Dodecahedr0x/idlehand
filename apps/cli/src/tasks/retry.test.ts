@@ -12,6 +12,8 @@ test('codebase infrastructure and publishing failures remain eligible for bounde
       reviewPr: async () => {throw new Error('unexpected task');},
       closeFailedPr: async () => {throw new Error('unexpected task');},
       squashReadyPr: async () => {throw new Error('unexpected task');},
+      addressPrComments: async () => {throw new Error('unexpected task');},
+      hasActionableFeedback: () => false,
     }));
     mock.module(${path('../workspace.ts')}, () => ({
       ensureBase: async () => '/unused', headSha: async () => 'abcdef',

@@ -46,6 +46,7 @@ test('a failed agent considers an issue and the runner files it only when reprod
       mergePr: async () => {},
       postPrReview: async () => {},
       squashMarker: () => '',
+      changesMarker: (sha) => '<!-- idlehand:changes:' + sha + ' -->',
       prDetail: async () => ({ number: 3, title: 'Fix crash', body: '', author: { login: 'x' }, baseRefName: 'main', headRefName: 'feat', headRefOid: 'abc', headRepositoryOwner: null, headRepository: null, url: 'https://github.com/o/r/pull/3', mergeable: 'MERGEABLE', mergeStateStatus: '', reviewDecision: '', statusCheckRollup: [], files: [], commits: [], comments: [] }),
       prDiff: async () => '',
     }));

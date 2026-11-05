@@ -9,7 +9,7 @@ import type { Config } from './config.ts';
 import { ciAllowsMerge, ciStatus, currentLogin, listOpenIssues, listOpenPrs, repoInfo, squashMarker, type IssueSummary, type PrSummary, type RepoInfo } from './gh.ts';
 import { providerBudgetError, type AgentProvider, type AgentRunResult } from './providers/index.ts';
 import { TASK_RETRY_DELAY_MS, parseCheckpoint, type State, type TaskCheckpoint } from './state.ts';
-import { closeFailedPr, reviewPr, squashReadyPr } from './tasks/reviewPr.ts';
+import { addressPrComments, closeFailedPr, hasActionableFeedback, reviewPr, squashReadyPr } from './tasks/reviewPr.ts';
 import { fixIssue } from './tasks/fixIssue.ts';
 import { reviewCodebase } from './tasks/reviewCodebase.ts';
 import type { Candidate, TaskResult } from './tasks/common.ts';
@@ -90,6 +90,12 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
           continue;
         }
         if (armed && ci === 'pending') continue;
+        const canUpdate = !!s.info.permissions?.push || pr.isCrossRepository;
+        if (!pr.isDraft && ours && canUpdate && hasActionableFeedback(pr, login) && !handled(s.repo, 'review-pr', `address:${pr.number}:${pr.headRefOid}:${pr.updatedAt}`)) {
+          disposing = true;
+          prs.push({ kind: 'review-pr', address: true, repo: s.repo, target: `address:${pr.number}:${pr.headRefOid}:${pr.updatedAt}`, label: `address comments on PR #${pr.number} · ${pr.title}`, pr });
+          continue;
+        }
         if (reviewed) {
           if (canDispose && ours && !handled(s.repo, 'review-pr', `dispose:${pr.number}:${pr.headRefOid}`)) {
             disposing = true;
@@ -106,8 +112,8 @@ export function planCandidates(scans: RepoScan[], opts: { login: string; cfg: Co
     // Merge or close an open pull request before reviewing the next one.
     prs.sort((a, b) => {
       if (a.kind !== 'review-pr' || b.kind !== 'review-pr') return 0;
-      const terminal = (c: Candidate) => (c.squash || c.close ? 0 : 1);
-      return terminal(a) - terminal(b) || a.pr.createdAt.localeCompare(b.pr.createdAt);
+      const rank = (c: typeof a) => (c.squash || c.close ? 0 : c.address ? 1 : 2);
+      return rank(a) - rank(b) || a.pr.createdAt.localeCompare(b.pr.createdAt);
     });
     out.push(...prs);
   }
@@ -162,9 +168,12 @@ function resumeCandidate(item: ResumeItem, scans: RepoScan[]): Candidate | null 
     const issue = scan.issues.find((i) => i.number === Number(item.target.slice('issue:'.length)));
     return issue ? { kind: 'fix-issue', repo: item.repo, target: item.target, label: `resume issue #${issue.number} · ${issue.title}`, issue } : null;
   }
-  if (item.kind === 'review-pr' && item.target.startsWith('pr:')) {
-    const pr = scan.prs.find((p) => p.number === Number(item.target.slice(3)));
-    return pr ? { kind: 'review-pr', repo: item.repo, target: item.target, label: `resume PR #${pr.number} · ${pr.title}`, pr } : null;
+  if (item.kind === 'review-pr' && /^(pr|address):/.test(item.target)) {
+    const number = Number(item.target.split(':')[1]);
+    const pr = scan.prs.find((p) => p.number === number);
+    if (!pr) return null;
+    const address = item.target.startsWith('address:');
+    return { kind: 'review-pr', repo: item.repo, target: item.target, label: `${address ? 'resume comments on' : 'resume'} PR #${pr.number} · ${pr.title}`, pr, ...(address ? { address: true } : {}) };
   }
   if (item.kind === 'review-codebase') return { kind: 'review-codebase', repo: item.repo, target: item.target, label: `resume codebase review · ${item.repo}` };
   return null;
@@ -289,7 +298,7 @@ export class Scheduler extends EventEmitter {
       let result: TaskResult;
       try {
         if (held) log(`resuming ${c.label}`);
-        result = c.kind === 'review-pr' ? await (c.close ? closeFailedPr(ctx, c.pr) : c.squash ? squashReadyPr(ctx, c.pr) : reviewPr(ctx, c.pr)) : c.kind === 'fix-issue' ? await fixIssue(ctx, c.issue) : await reviewCodebase(ctx);
+        result = c.kind === 'review-pr' ? await (c.close ? closeFailedPr(ctx, c.pr) : c.squash ? squashReadyPr(ctx, c.pr) : c.address ? addressPrComments(ctx, c.pr) : reviewPr(ctx, c.pr)) : c.kind === 'fix-issue' ? await fixIssue(ctx, c.issue) : await reviewCodebase(ctx);
       } catch (e) {
         if (isStopped(e)) { log('paused; the next run resumes this task'); return; }
         result = { kind: c.kind, outcome: 'failed', url: null, summary: (e as Error).message, costUsd: accounting.run?.costUsd ?? 0, costEstimated: accounting.run?.costEstimated ?? false, durationMs: Date.now() - Date.parse(started), exhausted: accounting.run?.exhausted ?? false };

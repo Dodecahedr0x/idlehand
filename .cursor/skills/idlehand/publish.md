@@ -19,6 +19,8 @@ End every issue, pull request, review, and close note with a blank line and then
 | --- | --- |
 | Review | `<!-- idlehand:review:NUMBER:SHA7 -->` |
 | Wait for CI, then squash this commit | `<!-- idlehand:squash:FULL_SHA -->` |
+| Ask for a revision and leave the pull request open | `<!-- idlehand:changes:FULL_SHA -->` |
+| Addressed review comments | `<!-- idlehand:address:NUMBER:SHA7 -->` |
 | Claim or ready fix PR | `<!-- idlehand:pr:ISSUE -->` |
 | Filed issue | `<!-- idlehand:issue:SHA7 -->` |
 | Issue close | `<!-- idlehand:issue-close:ISSUE -->` |
@@ -155,13 +157,17 @@ Omit `## Notes` when every finding has a line. TESTS NOTE is one of:
 
 When deferring a merge, append a line that is only the squash marker.
 
-Close a pull request that is not safe to merge:
+When the solution is a bit off, request changes and leave the pull request open. On your own pull request, post `COMMENT` instead of `REQUEST_CHANGES`. Append a line that is only the changes marker. Do not close it.
+
+Close a pull request you own only when the solution is bad or dangerous:
 
 ~~~~
-Closing: this pull request is not safe to merge.
+Closing: the solution is bad.
 
 SUMMARY
 ~~~~
+
+Use `the solution is dangerous` when it is dangerous. A failed check on a commit you already marked safe still uses the CI close note below.
 
 Close an armed pull request whose checks failed:
 
@@ -170,6 +176,19 @@ Closing: CI failed on `SHA7`.
 ~~~~
 
 Merge with `gh pr merge NUMBER --repo REPO --squash`, or `--merge` / `--rebase` to match `policy.mergeMethod`.
+
+## Addressed comments
+
+After pushing the revision, comment on the pull request:
+
+~~~~
+<!-- idlehand:address:NUMBER:SHA7 -->
+SUMMARY
+
+FOOTER with WORD Comment
+~~~~
+
+SHA7 is the new commit. SUMMARY says what the comments asked for and what changed. Do not comment when no code change was needed.
 
 ## Issue
 

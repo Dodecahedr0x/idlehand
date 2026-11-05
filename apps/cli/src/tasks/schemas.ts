@@ -68,6 +68,11 @@ export const REVIEW_PR_SCHEMA = {
   additionalProperties: false,
   properties: {
     verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'] },
+    solution: {
+      type: 'string',
+      enum: ['sound', 'off', 'bad', 'dangerous'],
+      description: 'sound: a correct fix. off: a bit wrong and should be revised, not closed. bad: the approach should not land. dangerous: merging could cause a security problem, data loss, or other harm.',
+    },
     summary: { type: 'string', description: 'Markdown review body: what the PR does, what you checked, overall assessment. 1-3 paragraphs.' },
     findings: {
       type: 'array',
@@ -96,5 +101,16 @@ export const REVIEW_PR_SCHEMA = {
     },
     safeToMerge: { type: 'boolean', description: 'true only if you would merge this yourself: correct, tested, scoped, no security or data-loss risk.' },
   },
-  required: ['verdict', 'summary', 'findings', 'tests', 'safeToMerge'],
+  required: ['verdict', 'solution', 'summary', 'findings', 'tests', 'safeToMerge'],
+} as const;
+
+export const ADDRESS_PR_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    action: { type: 'string', enum: ['addressed', 'nothing'], description: 'addressed only when you changed the branch to answer the comments. nothing when the comments need no code change.' },
+    summary: { type: 'string', description: 'What the comments asked for and what you changed, or why nothing was required.' },
+    testCommand: { type: ['string', 'null'], description: 'The test command you ran from the repo root, or null if the repo has no test runner.' },
+  },
+  required: ['action', 'summary', 'testCommand'],
 } as const;

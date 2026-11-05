@@ -23,5 +23,8 @@ describe('review prompt', () => {
     expect(prompt).toContain('safeToMerge');
     expect(prompt).toContain('feature');
     expect(prompt).toContain('unrelated refactor');
+    expect(prompt).toContain('bad');
+    expect(prompt).toContain('dangerous');
+    expect(prompt).toContain('a bit off stays open');
   });
 });

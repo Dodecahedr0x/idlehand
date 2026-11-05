@@ -10,7 +10,7 @@ test('a later run resumes an interrupted task in its workspace and session', asy
     import { mock } from 'bun:test';
     import assert from 'node:assert/strict';
     mock.module(${path('./workspace.ts')}, () => ({ pruneWorktrees: async () => {} }));
-    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected review'); }, closeFailedPr: async () => { throw new Error('unexpected review'); }, squashReadyPr: async () => { throw new Error('unexpected review'); } }));
+    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected review'); }, closeFailedPr: async () => { throw new Error('unexpected review'); }, squashReadyPr: async () => { throw new Error('unexpected review'); }, addressPrComments: async () => { throw new Error('unexpected review'); }, hasActionableFeedback: () => false }));
     mock.module(${path('./tasks/reviewCodebase.ts')}, () => ({ reviewCodebase: async () => { throw new Error('unexpected review'); } }));
     const seen = [];
     mock.module(${path('./tasks/fixIssue.ts')}, () => ({ fixIssue: async (ctx) => {
@@ -60,7 +60,7 @@ test('a fresh follow-up does not resume or replace the interrupted session', asy
     import { mock } from 'bun:test';
     import assert from 'node:assert/strict';
     mock.module(${path('./workspace.ts')}, () => ({ pruneWorktrees: async () => {} }));
-    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected review'); }, closeFailedPr: async () => { throw new Error('unexpected review'); }, squashReadyPr: async () => { throw new Error('unexpected review'); } }));
+    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected review'); }, closeFailedPr: async () => { throw new Error('unexpected review'); }, squashReadyPr: async () => { throw new Error('unexpected review'); }, addressPrComments: async () => { throw new Error('unexpected review'); }, hasActionableFeedback: () => false }));
     mock.module(${path('./tasks/reviewCodebase.ts')}, () => ({ reviewCodebase: async () => { throw new Error('unexpected review'); } }));
     mock.module(${path('./tasks/fixIssue.ts')}, () => ({ fixIssue: async (ctx) => {
       const first = await ctx.provider.run({ cwd: ctx.resume.worktree, prompt: 'original', schema: {}, maxBudgetUsd: null, timeoutMs: 1, onLog() {} });
@@ -107,7 +107,7 @@ test('stopping mid-task leaves the workspace and session running for the next la
     import { mock } from 'bun:test';
     import assert from 'node:assert/strict';
     mock.module(${path('./workspace.ts')}, () => ({ pruneWorktrees: async () => {} }));
-    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected review'); }, closeFailedPr: async () => { throw new Error('unexpected review'); }, squashReadyPr: async () => { throw new Error('unexpected review'); } }));
+    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected review'); }, closeFailedPr: async () => { throw new Error('unexpected review'); }, squashReadyPr: async () => { throw new Error('unexpected review'); }, addressPrComments: async () => { throw new Error('unexpected review'); }, hasActionableFeedback: () => false }));
     mock.module(${path('./tasks/reviewCodebase.ts')}, () => ({ reviewCodebase: async () => { throw new Error('unexpected review'); } }));
     mock.module(${path('./tasks/fixIssue.ts')}, () => ({ fixIssue: async (ctx) => {
       ctx.saveWorkspace({ worktree: ${JSON.stringify(work)}, branch: 'idlehand/issue-1' });

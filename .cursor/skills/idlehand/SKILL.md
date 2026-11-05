@@ -50,7 +50,7 @@ UPDATE tasks SET outcome='failed', cost_unknown=1, cost_estimated=1, finished_at
 
 Skip a target when a row for that repo, kind, and target has an outcome other than `failed`, or when it already has 3 failed rows. Insert `outcome='running'` when a task starts and update it when the task finishes. Use provider `cursor`, `cost_usd` 0, `cost_unknown` 1. This session does not meter dollars.
 
-Targets are `pr:N`, `squash:N:FULLSHA`, `close:N:FULLSHA`, `dispose:N:FULLSHA`, `issue:N`, and `codebase:YYYY-MM-DD`.
+Targets are `pr:N`, `squash:N:FULLSHA`, `close:N:FULLSHA`, `dispose:N:FULLSHA`, `address:N:FULLSHA:UPDATED`, `issue:N`, and `codebase:YYYY-MM-DD`.
 
 ## Queue
 
@@ -60,9 +60,9 @@ Targets are `pr:N`, `squash:N:FULLSHA`, `close:N:FULLSHA`, `dispose:N:FULLSHA`, 
 
 Pull requests first: if your review body on this full head SHA contains `<!-- idlehand:squash:FULLSHA -->`, merge or close it before reviewing anything else. Green or absent checks can merge. Pending checks wait. Red checks close it. Merging and closing require `policy.merge` `when-authorized`, push permission, and a PR that is not held. Held means the title matches `WIP` or `do not merge`, or a label matches `do not merge`, `wip`, or `hold`.
 
-Within pull requests, do squash and close before new reviews, then oldest `createdAt`. Within issues, prefer labels `bug`, `good first issue`, `good-first-issue`, `help wanted`, `help-wanted`, `regression`, `crash`, then older issues.
+Within pull requests, do squash and close before addressing comments, and address comments before new reviews. Then oldest `createdAt`. Within issues, prefer labels `bug`, `good first issue`, `good-first-issue`, `help wanted`, `help-wanted`, `regression`, `crash`, then older issues.
 
-While any pull request still needs review, merge, or close, do not start issues or a codebase review.
+While any pull request still needs review, merge, close, or a comment addressed, do not start issues or a codebase review.
 
 ## Stop
 
@@ -95,24 +95,37 @@ The sandbox can reach the public internet so setup can install declared dependen
 
 ## Review a pull request
 
-Read the description, the diff, and the surrounding code. Run the tests. Approve only a correct, tested fix of a demonstrated defect. Set `safeToMerge` only when you would merge it yourself. A feature, an unrelated refactor, missing tests, or a change that does not fix a demonstrated defect is not safe to merge. Use `request_changes` for a major or blocking finding, and `comment` when you cannot judge.
+Read the description, the diff, and the surrounding code. Run the tests. Approve only a correct, tested fix of a demonstrated defect. Set `safeToMerge` only when you would merge it yourself. A feature, an unrelated refactor, missing tests, or a change that does not fix a demonstrated defect is not safe to merge. Judge the solution `sound`, `off`, `bad`, or `dangerous`. `off` means it is a bit wrong and should be revised. `bad` means the approach should not land. `dangerous` means merging it could cause a security problem, data loss, or other harm. Use `request_changes` when it is off, or for a major or blocking finding, and say what to change. Use `comment` when you cannot judge.
 
 Re-run the test command in the sandbox on the PR worktree, expecting exit 0. Then post the review from [publish.md](publish.md).
 
 - Approve becomes `COMMENT` when that re-run did not exit 0.
 - Approve becomes `REQUEST_CHANGES` when a finding is major or blocking.
-- Your own PR cannot be `APPROVE`. Post `COMMENT`. You may still merge when you concluded approve, the re-run passed, and `safeToMerge` is true.
+- Your own PR cannot be `APPROVE` or `REQUEST_CHANGES`. Post `COMMENT`, and still say what to change when the solution is off. You may merge when you concluded approve, the re-run passed, and `safeToMerge` is true.
 
 Disposition, after re-reading the PR. If the head SHA moved, leave it. Otherwise, only when merge is `when-authorized`, you can push, and the PR is not held:
 
 - Safe, checks green or absent, and `MERGEABLE`: merge with `policy.mergeMethod`.
 - Safe, and checks are pending or mergeability is still `UNKNOWN` while checks are not red: do not merge. Put the squash marker for this full SHA in the review body.
-- Otherwise, if you authored the PR or its head starts with `idlehand/`: close it.
+- Otherwise, if you authored the PR or its head starts with `idlehand/`, close it only when the solution is bad or dangerous. Say which in the close note.
+- If the solution is a bit off, request changes and leave it open. On your own PR, GitHub only accepts `COMMENT`, so post `COMMENT`. Append a line that is only `<!-- idlehand:changes:FULLSHA -->` when you are asking for a revision and leaving the pull request open.
 - Otherwise leave it open.
+
+Do not close a pull request only because it is not safe to merge. A small miss, missing tests, or an incomplete fix stays open with the requested change.
 
 No check rollup means absent. A queued, in-progress, pending, waiting, or requested check means pending. Every conclusion `SUCCESS`, `NEUTRAL`, or `SKIPPED` means green. Anything else is red.
 
 "Safe" means the posted verdict is approve, or this is your own PR and you concluded approve, and the sandboxed tests exited 0, and `safeToMerge` is true.
+
+## Address comments on an owned pull request
+
+After squash and close, before a new review. Owned means you authored it, or the head starts with `idlehand/`. Skip drafts, labels matching `no-idlehand` or `no-bots?`, and a head you cannot push (unless the pull request is from a fork you can push to).
+
+Address it when this head has a review that requests changes, a conversation comment from someone else, a commented review from someone else, or your own review whose body contains `<!-- idlehand:changes:FULLSHA -->` for this full head SHA.
+
+Check out that head. Read the comments. Change only what they ask for. Re-run the tests in the sandbox and require exit 0 when you ran a test command. Commit, push with `--force-with-lease` against that full head SHA, and comment with the address template in [publish.md](publish.md). If the comments need no code change, stop without commenting. Do not close the pull request from this task.
+
+The target is `address:N:FULLSHA:UPDATED`, using the pull request's `updatedAt`. One attempt per head SHA and timestamp. A new commit or a new comment schedules it again.
 
 ## Fix an issue
 

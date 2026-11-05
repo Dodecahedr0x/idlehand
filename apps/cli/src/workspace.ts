@@ -168,12 +168,13 @@ export async function commitAll(dir: string, message: string, author: { name: st
 }
 
 /** Push `branch` from `dir` to `https://github.com/<target>.git` using the gh token for this one push. */
-export async function pushBranch(dir: string, target: string, branch: string, token: string, opts?: { force?: boolean; delete?: boolean }): Promise<void> {
+export async function pushBranch(dir: string, target: string, branch: string, token: string, opts?: { force?: boolean; delete?: boolean; expect?: string }): Promise<void> {
   const url = `https://x-access-token:${token}@github.com/${target}.git`;
   const refspec = opts?.delete ? `:refs/heads/${branch}` : `HEAD:refs/heads/${branch}`;
-  const args = ['git', 'push', '--quiet'];
+  const args = ['push', '--quiet'];
   // A claim must not overwrite another agent's branch. Later updates of a branch we own still lease it.
-  if (!opts?.delete && opts?.force !== false) args.push('--force-with-lease');
+  // `expect` is the remote SHA this push is based on, so a comment-addressing push does not need a tracking ref.
+  if (!opts?.delete && opts?.force !== false) args.push(opts?.expect ? `--force-with-lease=refs/heads/${branch}:${opts.expect}` : '--force-with-lease');
   args.push(url, refspec);
   await withGitLock(gitLockKey(dir), async () => {
     const r = await exec(['git', ...args], { cwd: dir, timeoutMs: 300_000, env: { GIT_TERMINAL_PROMPT: '0' } });

@@ -132,10 +132,39 @@ ${trimmedDiff}
 4. Only report findings you are confident about and can point to a file and line in the NEW version. Prefix uncertain remarks with "Question:".
 
 ## Verdict guidance
-- \`approve\`: correct, tested, and a fix for a demonstrated defect. Set \`safeToMerge\` true only if you would merge it as-is.
-- Set \`safeToMerge\` false for a feature, an unrelated refactor, missing tests, or a change that does not fix a defect the tests demonstrate. Request changes or leave a comment instead. When this pull request is the reviewer's own, a verdict that is not safe to merge closes it.
-- \`request_changes\`: at least one \`major\` or \`blocking\` finding.
-- \`comment\`: useful remarks but you cannot judge (e.g. tests cannot run here, or it needs a maintainer decision).
+- \`solution\`: \`sound\` when the change is a correct fix; \`off\` when it is a bit wrong, incomplete, untested, or not quite the right fix and should be revised; \`bad\` when the approach should not land; \`dangerous\` when merging it could cause a security problem, data loss, or other harm.
+- Close only when \`solution\` is \`bad\` or \`dangerous\`. A pull request that is a bit off stays open.
+- \`approve\`: \`solution\` is \`sound\`, the change is tested, and it fixes a demonstrated defect. Set \`safeToMerge\` true only if you would merge it as-is.
+- Set \`safeToMerge\` false for a feature, an unrelated refactor, missing tests, or a change that does not fix a defect the tests demonstrate. That is \`off\`: set verdict to \`request_changes\` and say what to change. Do not treat it as a reason to close.
+- \`request_changes\`: the solution is \`off\`, or there is at least one \`major\` or \`blocking\` finding. The summary must say what to change.
+- \`comment\`: you cannot judge (tests cannot run here, or it needs a maintainer decision) and the solution is not \`off\`, \`bad\`, or \`dangerous\`.
+
+${CONTRACT}`;
+}
+
+export function addressPrPrompt(repo: string, pr: PrDetail, diff: string, feedback: string): string {
+  const trimmedDiff = diff.length > 80_000 ? diff.slice(0, 80_000) + '\n…(diff truncated; read files directly for the rest)' : diff;
+  return `You are the author of this pull request. Review comments are waiting. Address the ones that ask for a change. The branch is checked out here.
+
+Repository: https://github.com/${repo}
+PR #${pr.number}: ${pr.title} (\`${pr.headRefName}\` → \`${pr.baseRefName}\`)
+
+## Description
+${pr.body?.trim() || '(no description)'}
+
+## Comments to address
+${feedback}
+
+## Diff
+\`\`\`diff
+${trimmedDiff}
+\`\`\`
+
+## How to work
+1. Read each comment against the current code. Skip praise, questions that need no edit, and remarks the branch already satisfies.
+2. Change only what the comments ask for. Do not widen the pull request, reformat unrelated code, or close it.
+3. Run the project's tests if it has any.
+4. Return \`action: "nothing"\` when no code change is warranted. Return \`addressed\` only after the working tree contains the revision.
 
 ${CONTRACT}`;
 }

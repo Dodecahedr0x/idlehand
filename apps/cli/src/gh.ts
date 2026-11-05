@@ -30,6 +30,9 @@ export interface PrSummary {
   updatedAt: string;
   createdAt: string;
   reviews: { author: { login: string } | null; state: string; body?: string }[];
+  /** Conversation comments. Inline review threads arrive on `reviews`. */
+  comments?: { author: { login: string } | null; body: string }[];
+  reviewDecision?: string;
   statusCheckRollup?: { name?: string; context?: string; state?: string; conclusion?: string; status?: string }[];
   labels: { name: string }[];
   additions: number;
@@ -83,7 +86,7 @@ export function repoInfo(repo: string): Promise<RepoInfo> {
 export function listOpenPrs(repo: string, limit = 50): Promise<PrSummary[]> {
   return ghJson<PrSummary[]>([
     'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json',
-    'number,title,author,isDraft,headRefOid,headRefName,baseRefName,url,updatedAt,createdAt,reviews,statusCheckRollup,labels,additions,deletions,isCrossRepository',
+    'number,title,author,isDraft,headRefOid,headRefName,baseRefName,url,updatedAt,createdAt,reviews,comments,reviewDecision,statusCheckRollup,labels,additions,deletions,isCrossRepository',
   ]);
 }
 
@@ -174,6 +177,9 @@ export function ciAllowsMerge(checks: CheckRollup[] | null | undefined): boolean
 }
 
 export const squashMarker = (sha: string) => `<!-- idlehand:squash:${sha} -->`;
+
+/** Posted on a review that asks for a revision and leaves the pull request open. */
+export const changesMarker = (sha: string) => `<!-- idlehand:changes:${sha} -->`;
 
 export async function mergePr(repo: string, number: number, method: 'squash' | 'merge' | 'rebase'): Promise<void> {
   await gh(['pr', 'merge', String(number), '--repo', repo, `--${method}`]);

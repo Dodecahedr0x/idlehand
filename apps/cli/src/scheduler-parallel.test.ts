@@ -7,7 +7,7 @@ test('scheduler runs up to jobs tasks at once and stops starting when the budget
     import { mock } from 'bun:test';
     import assert from 'node:assert/strict';
     mock.module(${path('./workspace.ts')}, () => ({ pruneWorktrees: async () => {} }));
-    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected task'); }, closeFailedPr: async () => { throw new Error('unexpected task'); }, squashReadyPr: async () => { throw new Error('unexpected task'); } }));
+    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected task'); }, closeFailedPr: async () => { throw new Error('unexpected task'); }, squashReadyPr: async () => { throw new Error('unexpected task'); }, addressPrComments: async () => { throw new Error('unexpected task'); }, hasActionableFeedback: () => false }));
     mock.module(${path('./tasks/reviewCodebase.ts')}, () => ({ reviewCodebase: async () => { throw new Error('unexpected task'); } }));
     const gates = [];
     mock.module(${path('./tasks/fixIssue.ts')}, () => ({ fixIssue: async (_ctx, issue) => {
@@ -96,7 +96,7 @@ test('continuous mode polls so free job slots start new work, and an idle queue 
     import { mock } from 'bun:test';
     import assert from 'node:assert/strict';
     mock.module(${path('./workspace.ts')}, () => ({ pruneWorktrees: async () => {} }));
-    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected task'); }, closeFailedPr: async () => { throw new Error('unexpected task'); }, squashReadyPr: async () => { throw new Error('unexpected task'); } }));
+    mock.module(${path('./tasks/reviewPr.ts')}, () => ({ reviewPr: async () => { throw new Error('unexpected task'); }, closeFailedPr: async () => { throw new Error('unexpected task'); }, squashReadyPr: async () => { throw new Error('unexpected task'); }, addressPrComments: async () => { throw new Error('unexpected task'); }, hasActionableFeedback: () => false }));
     mock.module(${path('./tasks/reviewCodebase.ts')}, () => ({ reviewCodebase: async () => { throw new Error('unexpected task'); } }));
     const gates = [];
     mock.module(${path('./tasks/fixIssue.ts')}, () => ({ fixIssue: async (_ctx, issue) => {

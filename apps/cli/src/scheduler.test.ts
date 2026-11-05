@@ -35,6 +35,21 @@ describe('planCandidates', () => {
     expect(plan.every((c) => c.kind === 'review-pr')).toBe(true);
   });
 
+  test('owned pull requests with comments to address come before other reviews and issues', () => {
+    const scans: RepoScan[] = [{
+      repo: 'o/r',
+      info: info({ permissions: { admin: false, push: true, pull: true } }),
+      prs: [
+        pr(1, { author: { login: 'me' }, headRefOid: 'aaa', updatedAt: '2026-02-01T00:00:00Z', reviews: [{ author: { login: 'pat' }, state: 'CHANGES_REQUESTED', body: 'add a test' }] }),
+        pr(5),
+      ],
+      issues: [issue(9)],
+    }];
+    const plan = planCandidates(scans, base());
+    expect(plan.map((c) => c.target)).toEqual(['address:1:aaa:2026-02-01T00:00:00Z', 'pr:5']);
+    expect(plan[0]).toMatchObject({ address: true });
+  });
+
   test('a pull request waiting on CI does not block issues', () => {
     const scans: RepoScan[] = [{
       repo: 'o/r',
