@@ -265,7 +265,12 @@ export class Store {
 
   /* ---- device codes ---- */
 
+  private deleteExpiredDeviceCodes(): void {
+    this.db.query('DELETE FROM device_codes WHERE expires_at < ?').run(nowIso());
+  }
+
   createDeviceCode(ttlMs: number): DeviceCodeRow {
+    this.deleteExpiredDeviceCodes();
     const deviceCode = randomHex(32);
     let userCode = randomUserCode();
     // extremely unlikely collision; retry a few times

@@ -430,6 +430,52 @@ describe('CLI device flow + bearer API', () => {
   });
 });
 
+describe('anonymous search and device-code bounds', () => {
+  test('search does not store a repository until it is included', async () => {
+    const found = (await (await req('/api/repos/search?q=rocket')).json()) as SelectedRepo[];
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ fullName: 'acme/rocket', selectedBy: 0 });
+    expect(found[0]!.selected).toBeUndefined();
+    expect(store.getRepoByFullName('acme/rocket')).toBeNull();
+
+    const alice = await cookieFor(1);
+    expect((await req('/api/selections', { method: 'POST', cookie: alice, json: { owner: 'acme', name: 'rocket' } })).status).toBe(201);
+    expect(store.getRepoByFullName('acme/rocket')?.full_name).toBe('acme/rocket');
+  });
+
+  test('anonymous search and device-code minting are rate-limited per client', async () => {
+    const a = { 'x-forwarded-for': '203.0.113.10' };
+    const b = { 'x-forwarded-for': '203.0.113.11' };
+    let searchStatus = 200;
+    for (let i = 0; i < 20; i++) {
+      searchStatus = (await req('/api/repos/search?q=rocket', { headers: a })).status;
+      if (searchStatus === 429) break;
+    }
+    expect(searchStatus).toBe(429);
+    expect((await req('/api/repos/search?q=rocket', { headers: b })).status).toBe(200);
+    expect((await req('/api/repos/search?q=rocket', { cookie: await cookieFor(1), headers: a })).status).toBe(200);
+
+    let codeStatus = 201;
+    for (let i = 0; i < 20; i++) {
+      codeStatus = (await req('/api/cli/codes', { method: 'POST', headers: a })).status;
+      if (codeStatus === 429) break;
+    }
+    expect(codeStatus).toBe(429);
+    expect((await req('/api/cli/codes', { method: 'POST', headers: b })).status).toBe(201);
+  });
+
+  test('abandoned and expired device codes are deleted', async () => {
+    const abandoned = store.createDeviceCode(-1000);
+    store.createDeviceCode(60_000);
+    expect(store.db.query('SELECT 1 AS x FROM device_codes WHERE device_code = ?').get(abandoned.device_code)).toBeNull();
+
+    const start = (await (await req('/api/cli/codes', { method: 'POST' })).json()) as DeviceCodeStart;
+    store.db.query('UPDATE device_codes SET expires_at = ? WHERE device_code = ?').run('2000-01-01T00:00:00.000Z', start.deviceCode);
+    expect(await (await req(`/api/cli/codes/${start.deviceCode}`)).json()).toEqual({ status: 'expired' });
+    expect(store.getDeviceCode(start.deviceCode)).toBeNull();
+  });
+});
+
 describe('pages', () => {
   test('included-repo activity lists only the signed-in account', async () => {
     const alice = await cookieFor(1);
