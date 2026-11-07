@@ -6,9 +6,38 @@ import { repoRowToCard, userToMe, type RepoInput, type UserRow } from '../db.ts'
 import { GitHubError } from '../github.ts';
 
 const DEVICE_CODE_TTL_MS = 15 * 60 * 1000;
+const ANON_PER_MINUTE = 10;
 const KINDS = new Set(['review-pr', 'fix-issue', 'review-codebase']);
 const PROVIDER_NAMES = new Set<string>(PROVIDERS);
 const OUTCOMES = new Set(['reviewed', 'merged', 'closed', 'pr-opened', 'issues-filed', 'nothing-found', 'unverified', 'failed']);
+
+class WindowLimiter {
+  private hits = new Map<string, number[]>();
+  constructor(
+    private readonly limit: number,
+    private readonly windowMs: number,
+  ) {}
+  allow(key: string): boolean {
+    const now = Date.now();
+    const recent = (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs);
+    if (recent.length >= this.limit) {
+      this.hits.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    this.hits.set(key, recent);
+    return true;
+  }
+}
+
+function clientKey(c: Context<AppEnv>): string {
+  const forwarded = c.req.header('x-forwarded-for');
+  if (forwarded) {
+    const ip = forwarded.split(',')[0]?.trim();
+    if (ip) return ip;
+  }
+  return c.req.header('x-real-ip')?.trim() || 'unknown';
+}
 
 /** Cookie-session guard with a cheap CSRF check for mutations. */
 async function requireSession(c: Context<AppEnv>, next: Next) {
@@ -49,6 +78,8 @@ export async function reposForUser(c: Context<AppEnv>, user: UserRow, page: numb
 
 export function apiRoutes() {
   const r = new Hono<AppEnv>();
+  const searchLimiter = new WindowLimiter(ANON_PER_MINUTE, 60_000);
+  const codeLimiter = new WindowLimiter(ANON_PER_MINUTE, 60_000);
 
   /* ---- browser (cookie) ---- */
 
@@ -109,6 +140,7 @@ export function apiRoutes() {
     const q = (c.req.query('q') ?? '').trim();
     if (!q) return c.json([]);
     const user = c.get('user');
+    if (!user && !searchLimiter.allow(clientKey(c))) return c.json({ error: 'too many requests' }, 429);
     let inputs: RepoInput[];
     try {
       inputs = await github.searchRepos(q, user?.access_token);
@@ -116,7 +148,17 @@ export function apiRoutes() {
       if (!user?.access_token || !tokenRejected(e)) throw e;
       inputs = await github.searchRepos(q, null);
     }
-    const cards = inputs.map((i) => repoRowToCard(store.upsertRepo(i)));
+    const cards = inputs.map((i) => ({
+      owner: i.owner,
+      name: i.name,
+      fullName: `${i.owner}/${i.name}`,
+      description: i.description,
+      htmlUrl: i.htmlUrl,
+      private: i.private,
+      defaultBranch: i.defaultBranch,
+      language: i.language,
+      stars: i.stars,
+    }));
     return c.json(store.decorateCards(cards, user?.id ?? null));
   });
 
@@ -124,6 +166,7 @@ export function apiRoutes() {
 
   r.post('/api/cli/codes', (c) => {
     const { store, config } = c.get('deps');
+    if (!codeLimiter.allow(clientKey(c))) return c.json({ error: 'too many requests' }, 429);
     const row = store.createDeviceCode(DEVICE_CODE_TTL_MS);
     const out: DeviceCodeStart = {
       deviceCode: row.device_code,
@@ -145,6 +188,7 @@ export function apiRoutes() {
         out = { status: 'pending' };
         break;
       case 'expired':
+        store.consumeDeviceCode(row.device_code);
         out = { status: 'expired' };
         break;
       case 'denied':
